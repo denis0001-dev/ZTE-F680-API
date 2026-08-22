@@ -20,6 +20,7 @@ import html as htmlmod
 import http.cookiejar
 import json
 import re
+import socket
 import sys
 import time
 import urllib.parse
@@ -204,6 +205,93 @@ class F680:
     def __exit__(self, exc_type, exc, tb):
         self.logout()
         return False
+
+    # -- management: reboot / factory reset ------------------------------
+    def _admin_action(self, action, data_tag):
+        """Получить fresh one-time токен страницы `rebootAndReset` и
+        послать управляющее действие (`Restart` / `Reset`) с RSA-подписью.
+
+        Протокол тот же, что и у port forwarding: one-time
+        `_sessionTmpToken` из menuView-страницы + заголовок
+        `Check: base64(RSA-PKCS1v15(SHA256(body)))`. Без Check роутер
+        просто молча игнорирует POST.
+        """
+        from .portforward import parse_page_token, rsa_check  # локально:
+        # порт-форвард от клиента не зависит, а от клиента зависят токены
+
+        view = self.raw("/?_type=menuView&_tag=rebootAndReset")
+        if "404 Not Found" in view:
+            raise RuntimeError("menuView 404 — страница недоступна?")
+        token = parse_page_token(view)
+        if not token:
+            raise RuntimeError("не найден одноразовый токен страницы")
+
+        body = f"IF_ACTION={action}&_sessionTOKEN={urllib.parse.quote(token)}"
+        resp = self._request(
+            f"/?_type=menuData&_tag={data_tag}",
+            raw_body=body,
+            extra_headers={
+                "X-Requested-With": "XMLHttpRequest",
+                "Check": rsa_check(body),
+            },
+        )
+        out = dict(re.findall(r"<(\w+)>([^<]*)</\1>", resp))
+        err = out.get("IF_ERRORSTR", "").strip()
+        if err and err.upper() != "SUCC":
+            raise RuntimeError(
+                f"ошибка роутера (IF_ERRORID={out.get('IF_ERRORID')}): {err}")
+        return out
+
+    def reboot(self):
+        """Перезагрузить роутер (web → Системное администрирование →
+        «Перезагрузка»). Возвращает raw-ответ роутера; после возврата
+        роутер через несколько секунд отваливается и поднимается заново
+        (~30-60 c). Чтобы дождаться его, вызови `wait_online()`."""
+        return self._admin_action("Restart", "devmgr_restartmgr_lua.lua")
+
+    def factory_reset(self):
+        """Сбросить настройки к заводским (та же страница, «Сброс
+        настроек»). ВНИМАНИЕ: порт-форвардинг, DHCP-привязки, Wi-Fi и
+        вся пользовательская конфигурация сотрётся. После сброса
+        роутер поднимется с дефолтными параметрами."""
+        return self._admin_action("Reset", "db_resetmgr_lua.lua")
+
+    def wait_online(self, timeout=180, poll=2, verbose=True):
+        """Подождать, пока роутер снова примет HTTP-запросы (например
+        после reboot). Возвращает время ожидания в секундах.
+
+        Считаем «готовым» только живой HTTP-ответ: после перезагрузки
+        веб-серв роутера сначала отвечает 400 на всё подряд (boot в
+        процессе), поэтому HTTPError — НЕ признак готовности. Бросает
+        TimeoutError по истечении `timeout`.
+        """
+        import urllib.error
+
+        host = urllib.parse.urlsplit(self.base).hostname
+        port = urllib.parse.urlsplit(self.base).port or 80
+        start = time.time()
+        last_log = 0.0
+        while True:
+            try:
+                s = socket.create_connection((host, port), timeout=poll)
+                s.close()
+                # port открыт — проверим, что веб уже отвечает осмысленно
+                try:
+                    self._request("/?_type=loginData&_tag=login_entry")
+                    return time.time() - start
+                except urllib.error.HTTPError:
+                    pass  # 400/500 — ещё не готов
+                except OSError:
+                    pass
+            except OSError:
+                pass
+            if time.time() - start > timeout:
+                raise TimeoutError(
+                    f"роутер {host}:{port} не вернулся за {timeout} c")
+            if self.verbose and time.time() - last_log > 15:
+                self._log(f"ожидание {host}... {int(time.time()-start)}s")
+                last_log = time.time()
+            time.sleep(poll)
 
     # -- data ------------------------------------------------------------
     def get_data(self, tag, extra=""):

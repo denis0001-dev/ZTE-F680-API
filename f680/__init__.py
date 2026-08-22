@@ -14,8 +14,9 @@ CLI-команды (отдельные модули):
 
 from .client import F680, PAGES
 from .portforward import PortForward
+from .dhcp import Dhcp
 from .macvendor import mac_vendor, hostname_hint, guess_device
 
-__all__ = ["F680", "PortForward", "PAGES",
+__all__ = ["F680", "PortForward", "Dhcp", "PAGES",
            "mac_vendor", "hostname_hint", "guess_device"]
 __version__ = "1.0.0"

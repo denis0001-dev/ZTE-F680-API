@@ -9,6 +9,8 @@ f680.cli.api — CLI для базового веб-API ZTE F680.
     python -m f680.cli.api raw "?_type=menuData&_tag=wan_homepage_lua.lua"
     python -m f680.cli.api logout
     python -m f680.cli.api pages
+    python -m f680.cli.api reboot          # перезагрузить и дождаться подъёма
+    python -m f680.cli.api reset --yes     # СБРОС к заводским
 
 Все команды (кроме `pages`) работают через context manager: авто-login
 при входе, авто-logout при выходе (даже при ошибке) — на роутере не
@@ -18,6 +20,7 @@ f680.cli.api — CLI для базового веб-API ZTE F680.
 import argparse
 import re
 import sys
+import time
 
 from f680.client import F680, PAGES
 from f680.config import BASE, USERNAME, PASSWORD
@@ -46,6 +49,18 @@ def build_parser():
     p_raw.add_argument("qs",
                        help="query string, e.g. ?_type=menuData&_tag=wan_homepage_lua.lua")
     sub.add_parser("pages", help="list known page tags")
+    p_reboot = sub.add_parser("reboot", help="перезагрузить роутер")
+    p_reboot.add_argument("--no-wait", action="store_true",
+                         help="не ждать, пока роутер поднимется")
+    p_reboot.add_argument("--timeout", type=int, default=180,
+                          help="сколько секунд ждать восстановления [180]")
+    p_reset = sub.add_parser("reset", help="СБРОС настроек к заводским (осторожно!)")
+    p_reset.add_argument("--yes", action="store_true",
+                         help="подтвердить (без --yes ничего не произойдёт)")
+    p_reset.add_argument("--no-wait", action="store_true",
+                         help="не ждать, пока роутер поднимется")
+    p_reset.add_argument("--timeout", type=int, default=180,
+                         help="сколько секунд ждать восстановления [180]")
     return ap
 
 
@@ -100,6 +115,29 @@ def main(argv=None):
                 cmd_devices(c)
             elif args.cmd == "raw":
                 print(c.raw(args.qs))
+            elif args.cmd == "reboot":
+                c.reboot()
+                print("reboot запрошен — роутер перезагружается...")
+                if not args.no_wait:
+                    t0 = time.time()
+                    try:
+                        c.wait_online(timeout=args.timeout)
+                    finally:
+                        print(f"роутер снова в сети через {int(time.time()-t0)} c")
+            elif args.cmd == "reset":
+                if not args.yes:
+                    print("Сброс ВСЕХ настроек к заводским? "
+                          "Запусти с --yes, чтобы подтвердить.")
+                    return 1
+                c.factory_reset()
+                print("factory reset запрошен — роутер перезагружается "
+                      "с дефолтной конфигурацией...")
+                if not args.no_wait:
+                    t0 = time.time()
+                    try:
+                        c.wait_online(timeout=args.timeout)
+                    finally:
+                        print(f"роутер снова в сети через {int(time.time()-t0)} c")
         return 0
     except RuntimeError as e:
         if "login failed" in str(e).lower():

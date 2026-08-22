@@ -20,6 +20,7 @@ dotenv = ["python-dotenv>=1.0"]
 f680-api = "f680.cli.api:main"
 f680-pf = "f680.cli.pf:main"
 f680-net = "f680.cli.net:main"
+f680-dhcp = "f680.cli.dhcp:main"
 
 [tool.setuptools.packages.find]
 include = ["f680*"]

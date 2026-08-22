@@ -21,6 +21,7 @@ f680.cli.net — «одной кнопкой» обзор домашней се�
 import argparse
 import json
 import sys
+import time
 
 from f680.client import F680
 from f680.portforward import PortForward
@@ -145,6 +146,7 @@ def build_parser():
             "  f680-net devices   # все клиенты + вендоры\n"
             "  f680-net pf        # правила проброса портов\n"
             "  f680-net all       # полный отчёт\n"
+            "  f680-net reboot    # перезагрузить роутер (и дождаться подъёма)\n"
             "  f680-net devices --json\n"
         ))
     ap.add_argument("--base", default=BASE, help=argparse.SUPPRESS)
@@ -160,6 +162,10 @@ def build_parser():
                        help="вывод в JSON (с вендорами)")
     sub.add_parser("pf", help="правила проброса портов")
     sub.add_parser("all", help="полный отчёт: status + devices + pf")
+    p_reboot = sub.add_parser("reboot", help="перезагрузить роутер")
+    p_reboot.add_argument("--no-wait", action="store_true",
+                         help="не ждать, пока роутер поднимется")
+    p_reboot.add_argument("--timeout", type=int, default=180)
     return ap
 
 
@@ -188,6 +194,15 @@ def main(argv=None):
                     cmd_pf(pf, args)
             elif args.cmd == "all":
                 cmd_all(c, args)
+            elif args.cmd == "reboot":
+                c.reboot()
+                print("reboot запрошен — роутер перезагружается...")
+                if not args.no_wait:
+                    t0 = time.time()
+                    try:
+                        c.wait_online(timeout=args.timeout)
+                    finally:
+                        print(f"роутер снова в сети через {int(time.time()-t0)} c")
         return 0
     except RuntimeError as e:
         if "login failed" in str(e).lower():
