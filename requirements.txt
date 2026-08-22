@@ -1,5 +1,5 @@
 # Обязателен только pycryptodome (RSA/AES для port forwarding).
 pycryptodome>=3.15
 
-# python-dotenv — опционально: без него f680_config.py сам парсит .env
+# python-dotenv — опционально: без него f680/config.py сам парсит .env
 python-dotenv>=1.0

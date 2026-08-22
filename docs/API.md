@@ -63,7 +63,7 @@ SHA256(пароль).**
 ### Детали, без которых не работает
 
 * Сервер ставит cookie `SID` — **держать cookie jar живым** на всю
-  сессию (в `f680_api.py` это `http.cookiejar.CookieJar`).
+  сессию (в `f680/client.py` это `http.cookiejar.CookieJar`).
 * **Разогрев сессии**: после логина сделать `GET /` (~199 KB главная), как
   это делает браузер. Без этого могут прилетать ложные `SessionTimeout`
   на первых `menuData`-запросах.
@@ -85,7 +85,7 @@ body: IF_LogOff=1
 Обратите внимание: это **GET с телом формы** — именно поэтому в
 `F680._request` есть параметр `method`, форсирующий HTTP-глагол.
 
-В обоих скриптах logout:
+В библиотеке logout:
 
 * метод `logout()` — безопасен к повторным вызовам;
 * context manager `with F680() as c:` / `with PortForward() as pf:` →
@@ -121,7 +121,7 @@ body: IF_LogOff=1
 </ajax_response_xml_root>
 ```
 
-Парсинг в `f680_api.F680.parse_instances`: список словарей
+Парсинг в `f680.client.F680.parse_instances`: список словарей
 `{ParaName: ParaValue, ..., "_instid": ...}`.
 
 ## 4. Endpoints
@@ -192,13 +192,13 @@ body: IF_LogOff=1
 
 ```bash
 # сырой XML страницы
-python3 f680_api.py raw "?_type=menuData&_tag=wan_homepage_lua.lua"
+f680-api raw "?_type=menuData&_tag=wan_homepage_lua.lua"
 
 # hidden-данные
-python3 f680_api.py raw "?_type=hiddenData&_tag=accessdev_data"
+f680-api raw "?_type=hiddenData&_tag=accessdev_data"
 
 # HTML-страница меню (в ней — one-time _sessionTmpToken, см. PORT_FORWARDING.md)
-python3 f680_api.py raw "?_type=menuView&_tag=portForwarding"
+f680-api raw "?_type=menuView&_tag=portForwarding"
 ```
 
 `raw()` сам подставляет `_sessionTOKEN`, если он ещё не в query string.

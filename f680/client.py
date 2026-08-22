@@ -1,27 +1,20 @@
-#!/usr/bin/env python3
 """
-f680_api.py — minimal client for the ZTE F680 (DST/MGTS) admin web API.
+f680.client — базовый клиент веб-API роутера ZTE F680 (DST/MGTS).
 
-The router's web UI is not a plain HTML form; it talks to a small JSON/XML
-API over `/_type=...&_tag=...` URLs. This module wraps that API so you can
-log in and pull structured data programmatically.
+Веб-интерфейс роутера — не обычная HTML-форма, а небольшой JSON/XML API
+по URL вида `/_type=...&_tag=...`. Этот модуль оборачивает API: логин,
+logout, чтение и парсинг data-страниц, таблица подключённых клиентов.
 
-Endpoints / usage are documented in the note "ZTE F680 router — admin web API".
+Протокол аутентификации и endpoints описаны подробно в docs/API.md.
 
-Quick CLI usage:
-    python3 f680_api.py login
-    python3 f680_api.py page wlan_homepage_lua.lua
-    python3 f680_api.py page devinfo_homepage_lua.lua
-    python3 f680_api.py devices            # nice table of connected clients
-    python3 f680_api.py raw "?_type=menuData&_tag=wlan_homepage_lua.lua"
-    python3 f680_api.py logout             # explicit logout
+Python API:
+    from f680 import F680
 
-Every command uses the context manager, so it auto-logs-out afterwards
-(even on error), and no session is left hanging on the router.
-`logout()` can also be called manually any time.
+    with F680() as c:                    # авто-login / авто-logout
+        devs = c.connected_devices()
+        err, insts = c.get_page("wlan")  # (has_error, [dict, ...])
 """
 
-import argparse
 import hashlib
 import http.cookiejar
 import json
@@ -31,15 +24,12 @@ import time
 import urllib.parse
 import urllib.request
 
-import f680_config as config
+from .config import BASE as _DEFAULT_BASE, USERNAME as _DEFAULT_USER, \
+    PASSWORD as _DEFAULT_PASS
 
 # ---------------------------------------------------------------------------
-# Configuration (.env / env — см. f680_config.py)
+# Constants
 # ---------------------------------------------------------------------------
-BASE = config.BASE
-USERNAME = config.USERNAME
-PASSWORD = config.PASSWORD
-
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126 Safari/537.36"
@@ -57,12 +47,18 @@ PAGES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Client
-# ---------------------------------------------------------------------------
 class F680:
-    def __init__(self, base=BASE, username=USERNAME, password=PASSWORD,
-                 timeout=20, verbose=False):
+    """Client for the ZTE F680 admin web API.
+
+    Usage:
+        with F680() as c:            # auto-login / auto-logout
+            c.connected_devices()
+        # or keep a session alive:
+        c = F680(); c.login()
+    """
+
+    def __init__(self, base=_DEFAULT_BASE, username=_DEFAULT_USER,
+                 password=_DEFAULT_PASS, timeout=20, verbose=False):
         self.base = base.rstrip("/")
         self.username = username
         self.password = password
@@ -123,7 +119,8 @@ class F680:
 
         for attempt in range(1, retries + 1):
             # 1. get session token
-            init = json.loads(self._request("/?_type=loginData&_tag=login_entry"))
+            init = json.loads(self._request(
+                "/?_type=loginData&_tag=login_entry"))
             self.sess_token = init.get("sess_token")
             self._log("sess_token:", self.sess_token)
 
@@ -262,9 +259,7 @@ class F680:
         """Return a tidy list of clients from the accessdev page."""
         xml = self.get_data("accessdev")
         out = []
-        # Walk instances; collect contiguous ParaName/ParaValue triples.
         blocks = re.findall(r"<Instance>.*?</Instance>", xml, re.S)
-        cur = {}
         for block in blocks:
             pairs = re.findall(
                 r"<ParaName>([^<]+)</ParaName>"
@@ -279,85 +274,3 @@ class F680:
             if row.get("IPAddress") or row.get("MACAddress"):
                 out.append(row)
         return out
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-def main():
-    ap = argparse.ArgumentParser(description="ZTE F680 admin web API client")
-    ap.add_argument("--base", default=BASE, help=f"[default: {BASE}]")
-    ap.add_argument("--user", default=USERNAME)
-    ap.add_argument("--pass", dest="password", default=PASSWORD,
-                    help="пароль (по умолчанию из F680_PASSWORD/.env)")
-    ap.add_argument("-v", "--verbose", action="store_true")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("login", help="test login")
-    sub.add_parser("logout", help="login then explicitly logout (teardown test)")
-    p_page = sub.add_parser("page", help="dump a data page's key/values")
-    p_page.add_argument("tag", help="page tag or alias (e.g. wlan, wan, ...)")
-    p_page.add_argument("--extra", default="")
-    sub.add_parser("devices", help="list connected clients")
-    p_raw = sub.add_parser("raw", help="raw fetch of a ?_type=... query")
-    p_raw.add_argument("qs", help="query string, e.g. ?_type=menuData&_tag=wan_homepage_lua.lua")
-    sub.add_parser("pages", help="list known page tags")
-
-    args = ap.parse_args()
-    c = F680(base=args.base, username=args.user, password=args.password,
-             verbose=args.verbose)
-
-    if args.cmd == "pages":
-        for k, v in PAGES.items():
-            print(f"{k:12s} {v}")
-        return
-
-    # All commands below use the context manager: auto-login on entry,
-    # auto-logout on exit (even when the body raises or sys.exit is called).
-    try:
-        with c:
-            if args.cmd == "login":
-                print("login OK")
-
-            elif args.cmd == "logout":
-                # already logged in by __enter__; now do the explicit logout
-                c.logout()
-                print("logout OK")
-
-            elif args.cmd == "page":
-                xml = c.get_data(args.tag, args.extra)
-                has_err, insts = c.has_error(xml), c.parse_instances(xml)
-                if has_err:
-                    print(f"[error on {args.tag}]")
-                    m = re.search(r"<IF_ERRORSTR>([^<]+)</IF_ERRORSTR>", xml)
-                    if m:
-                        print("  IF_ERRORSTR:", m.group(1))
-                    sys.exit(1)
-                if not insts:
-                    print("(no data instances)")
-                for i, d in enumerate(insts):
-                    print(f"--- instance {i} {d.pop('_instid', '')}")
-                    for k, v in d.items():
-                        print(f"    {k}: {v}")
-
-            elif args.cmd == "devices":
-                devs = c.connected_devices()
-                if not devs:
-                    print("(no devices found)")
-                    return
-                print(f"{'IP':<16} {'MAC':<18} HOSTNAME")
-                for d in devs:
-                    print(f"{d.get('IPAddress',''):<16} "
-                          f"{d.get('MACAddress',''):<18} {d.get('HostName','')}")
-
-            elif args.cmd == "raw":
-                print(c.raw(args.qs))
-    except RuntimeError as e:
-        if "login failed" in str(e).lower():
-            print("LOGIN FAILED", file=sys.stderr)
-            sys.exit(2)
-        raise
-
-
-if __name__ == "__main__":
-    main()

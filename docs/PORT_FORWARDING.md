@@ -8,7 +8,7 @@
 
 ### 1.1. Логин
 
-Обычный 3-шаговый SHA256-логин (`f680_api.F680.login`) — см. [API.md](API.md).
+Обычный 3-шаговый SHA256-логин (`f680.client.F680.login`) — см. [API.md](API.md).
 Устанавливает cookie + базовый `sess_token`.
 
 ### 1.2. Забрать one-time токен страницы
@@ -38,7 +38,7 @@ token = m.group(1).encode().decode("unicode_escape")
 токен; повторное использование устаревшего → `IF_ERRORID -1452`
 «Страница устарела».
 
-Поэтому в `f680_pf.py` перед КАЖДЫМ POST делается свежий `menuView`
+Поэтому в `f680.portforward` перед КАЖДЫМ POST делается свежий `menuView`
 (`PortForward._view()`).
 
 ### 1.3. POST изменения
@@ -58,7 +58,7 @@ IF_ACTION=...&_InstID=...&<поля правила>&_sessionTOKEN=<токен и
 
 **Заголовок `Check`**: SHA256-hex от **строки тела целиком** (как была
 отправлена), затем RSA-PKCS1v15 шифрованием за **встроенным в роутер
-публичным ключом** (`f680_pf.PUBKEY`), base64. Криптография через
+публичным ключом** (`f680.portforward.PUBKEY`), base64. Криптография через
 [pycryptodome](https://pycryptodome.readthedocs.io/):
 
 ```python
@@ -128,10 +128,10 @@ def unescape_stable(s):
 правило, делают `unescape_stable` для всех полей, меняют одно,
 пересылают.
 
-## 3. Python API (`f680_pf.PortForward`)
+## 3. Python API (`f680.portforward.PortForward`)
 
 ```python
-from f680_pf import PortForward
+from f680 import PortForward
 
 with PortForward() as pf:          # авто-login/logout
     pf.rules()                     # → [dict, ...] со всеми правилами
@@ -152,13 +152,13 @@ with PortForward() as pf:          # авто-login/logout
 ## 4. CLI
 
 ```bash
-python3 f680_pf.py list
-python3 f680_pf.py open 3000 192.168.1.3 3000 "PC | Open WebUI"
-python3 f680_pf.py open 22 192.168.1.2 22 --proto tcp
-python3 f680_pf.py open 50000 192.168.1.5 5000 --ext-end 60000 --int-end 15000 --proto udp
-python3 f680_pf.py close 3000
-python3 f680_pf.py remove "PC | Open WebUI"
-python3 f680_pf.py logout
+f680-pf list
+f680-pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
+f680-pf open 22 192.168.1.2 22 --proto tcp
+f680-pf open 50000 192.168.1.5 5000 --ext-end 60000 --int-end 15000 --proto udp
+f680-pf close 3000
+f680-pf remove "PC | Open WebUI"
+f680-pf logout
 ```
 
 Формат `open`: `open <ext-port> <ip> <int-port> [название]`, опции:

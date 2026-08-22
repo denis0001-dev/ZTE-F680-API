@@ -1,39 +1,33 @@
-#!/usr/bin/env python3
 """
-f680_pf.py — управление пробросом портов на роутере ZTE F680.
+f680.portforward — управление пробросом портов (NAT) на ZTE F680.
 
-Синтаксис:
-  pf list                    — список правил
-  pf open <порт> <ip> <порт> [название] [--proto tcp|udp|both]
-  pf close <порт или название>    — отключить правило (но оставить)
-  pf remove <порт или название>   — удалить правило
-
-Примеры:
-  pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
-  pf close 3000
-  pf remove "PC | Open WebUI"
-
-Порт может быть диапазоном, напр. 50000-60000 (через --ext-end / --int-end).
+Реверс-инжиниринг веб-интерфейса: изменения правил требуют one-time
+`_sessionTmpToken` из menuView-страницы и заголовка
+`Check: base64(RSA-PKCS1v15(SHA256(body)))` — подробности в
+docs/PORT_FORWARDING.md.
 
 Python API:
-  from f680_pf import PortForward
-  with PortForward() as pf:
-      pf.rules()
-      pf.open_port(8080, "192.168.1.2", 8080, proto="both")
+    from f680 import PortForward
+
+    with PortForward() as pf:      # авто-login / авто-logout
+        pf.rules()
+        pf.open_port(8080, "192.168.1.2", 8080, proto="both")
+        pf.close_port(8080)
+        pf.remove_port(8080)
 """
 
-import argparse
 import base64
 import hashlib
 import html as htmlmod
 import re
-import sys
 import urllib.parse
 
-from f680_api import F680
-import f680_config as config
 from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
+
+from .client import F680
+from .config import BASE as _DEFAULT_BASE, USERNAME as _DEFAULT_USER, \
+    PASSWORD as _DEFAULT_PASS
 
 # ---------------------------------------------------------------------------
 # Константы веб-интерфейса роутера
@@ -41,6 +35,7 @@ from Crypto.PublicKey import RSA
 VIEW_TAG = "portForwarding"
 DATA_TAG = "firewall_portforwarding_lua.lua"
 
+# Hardcoded public key of the router (see docs/PORT_FORWARDING.md).
 PUBKEY = (
     "-----BEGIN PUBLIC KEY-----\n"
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAodPTerkUVCYmv28SOfRV\n"
@@ -60,6 +55,7 @@ PROTOS = {"tcp": "TCP", "udp": "UDP", "both": "BOTH"}
 # Криптография
 # ---------------------------------------------------------------------------
 def rsa_check(body: str) -> str:
+    """Заголовок `Check`: RSA-PKCS1v15(SHA256(body)), base64."""
     digest = hashlib.sha256(body.encode()).hexdigest()
     cipher = PKCS1_v1_5.new(RSA.import_key(PUBKEY))
     return base64.b64encode(cipher.encrypt(digest.encode())).decode()
@@ -76,6 +72,8 @@ def unescape_stable(s: str) -> str:
 
 
 def aes_zero_pad_b64(src: str, key: str, iv: str) -> str:
+    """CryptoJS-совместимый AES-CBC с ZeroPadding (не нужен для port
+    forwarding, оставлен для полей с `encode="1"`)."""
     data = src.encode()
     data += b"\x00" * (-len(data) % 16)
     enc = AES.new(hashlib.sha256(key.encode()).digest(),
@@ -84,6 +82,7 @@ def aes_zero_pad_b64(src: str, key: str, iv: str) -> str:
 
 
 def parse_page_token(view_html: str):
+    """Вытащить one-time `_sessionTmpToken` из HTML menuView-страницы."""
     m = re.search(r'_sessionTmpToken = "((?:\\x[0-9a-f]{2})+)"', view_html)
     return m.group(1).encode().decode("unicode_escape") if m else None
 
@@ -92,8 +91,15 @@ def parse_page_token(view_html: str):
 # API
 # ---------------------------------------------------------------------------
 class PortForward:
-    def __init__(self, base=config.BASE, username=config.USERNAME,
-                 password=config.PASSWORD, verbose=False):
+    """Port-forwarding client. Wraps F680 for the session.
+
+    Usage:
+        with PortForward() as pf:
+            pf.open_port(3000, "192.168.1.3", 3000, alias="web")
+    """
+
+    def __init__(self, base=_DEFAULT_BASE, username=_DEFAULT_USER,
+                 password=_DEFAULT_PASS, verbose=False):
         self.c = F680(base=base, username=username, password=password,
                       verbose=verbose)
         self.token = None
@@ -118,6 +124,7 @@ class PortForward:
         return False
 
     def _view(self):
+        """Fetch the menuView page, grab a fresh one-time token."""
         r = self.c.raw(f"/?_type=menuView&_tag={VIEW_TAG}")
         if "404 Not Found" in r:
             raise RuntimeError("menuView 404 — страница недоступна?")
@@ -127,6 +134,7 @@ class PortForward:
         return self.token
 
     def _post(self, action, instid="-1", fields=None):
+        """Fresh menuView token + signed POST to the data endpoint."""
         self._view()
         body = "IF_ACTION={}&_InstID={}".format(action, instid)
         for k, v in (fields or {}).items():
@@ -148,6 +156,7 @@ class PortForward:
         return out
 
     def rules(self):
+        """All port-forwarding rules as a list of dicts."""
         self._view()
         xml = self.c.get_data(DATA_TAG)
         if self.c.has_error(xml):
@@ -209,6 +218,7 @@ class PortForward:
     def open_port(self, ext_port, int_ip, int_port, proto="both",
                   alias=None, ext_port_end=None, int_port_end=None,
                   remote_host="0.0.0.0"):
+        """Create (or replace) and enable a rule. Returns the rule id."""
         proto = PROTOS[proto.lower()]
         fields = self._default_fields(ext_port, int_ip, int_port, proto,
                                       alias, ext_port_end, int_port_end,
@@ -221,6 +231,7 @@ class PortForward:
         return resp.get("_InstID") or resp.get("INSTIDENTITY")
 
     def close_port(self, ref):
+        """Disable a rule (Enable=0), it stays in the list."""
         r = self._find(ref)
         fields = {k: unescape_stable(str(v)) for k, v in r["raw"].items()}
         fields.pop("_instid", None)
@@ -229,105 +240,16 @@ class PortForward:
         return r
 
     def remove_port(self, ref):
+        """Delete a rule entirely."""
         r = self._find(ref)
         self._post("Delete", instid=r["id"])
         return r
 
     def set_alias(self, ref, new_alias):
+        """Rename a rule (preserves all other fields)."""
         r = self._find(ref)
         fields = {k: unescape_stable(str(v)) for k, v in r["raw"].items()}
         fields.pop("_instid", None)
         fields["Alias"] = new_alias
         self._post("Apply", instid=r["id"], fields=fields)
         return r
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-def _fmt_range(a, b):
-    return str(a) if b == a else f"{a}-{b}"
-
-
-def print_rules(rules):
-    print(f"{'ПОРТ':<12} {'ПРОТО':<6} {'НАЗВАНИЕ':<22} {'-> IP:ПОРТ':<22} СОСТОЯНИЕ")
-    for r in rules:
-        ext = _fmt_range(r["ext_port"], r["ext_port_end"] or r["ext_port"])
-        inp = _fmt_range(r["int_port"], r["int_port_end"] or r["int_port"])
-        state = "" if r["enabled"] else " [выкл]"
-        print(f"{ext:<12} {r['protocol'].lower():<6} {r['alias']:<22} "
-              f"{r['int_ip']}:{inp:<13}{state}")
-
-
-def main():
-    ap = argparse.ArgumentParser(
-        description="Проброс портов на ZTE F680",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "примеры:\n"
-            "  pf list\n"
-            '  pf open 3000 192.168.1.3 3000 "PC | Open WebUI"\n'
-            "  pf close 3000\n"
-            '  pf remove "PC | Open WebUI"\n'
-            "\nопции для open:\n"
-            "  --proto tcp|udp|both (по умолчанию both)\n"
-            "  --ext-end N  конец диапазона внешних портов\n"
-            "  --int-end N  конец диапазона внутренних портов\n"
-            "  --from IP    ограничить внешний IP (по умолчанию любой)"
-        ))
-    ap.add_argument("--base", default=config.BASE, help=argparse.SUPPRESS)
-    ap.add_argument("--user", default=config.USERNAME, help=argparse.SUPPRESS)
-    ap.add_argument("--pass", dest="password", default=config.PASSWORD,
-                    help=argparse.SUPPRESS)
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("list", help="показать все правила")
-
-    p_open = sub.add_parser("open", help="создать/обновить и включить правило")
-    p_open.add_argument("port", type=int, help="внешний порт")
-    p_open.add_argument("ip", help="IP устройства в локальной сети")
-    p_open.add_argument("int_port", type=int, help="внутренний порт")
-    p_open.add_argument("name", nargs="?", default=None, help="название правила")
-    p_open.add_argument("--proto", default="both", choices=sorted(PROTOS))
-    p_open.add_argument("--ext-end", type=int)
-    p_open.add_argument("--int-end", type=int)
-    p_open.add_argument("--from", dest="remote_host", default="0.0.0.0")
-
-    p_close = sub.add_parser("close", help="отключить правило (оставить)")
-    p_close.add_argument("ref", help="порт или название")
-    p_remove = sub.add_parser("remove", help="удалить правило")
-    p_remove.add_argument("ref", help="порт или название")
-
-    args = ap.parse_args()
-    pf = PortForward(base=args.base, username=args.user, password=args.password)
-
-    try:
-        with pf:
-            if args.cmd == "list":
-                print_rules(pf.rules())
-            elif args.cmd == "open":
-                rid = pf.open_port(args.port, args.ip, args.int_port,
-                                   proto=args.proto, alias=args.name,
-                                   ext_port_end=args.ext_end, int_port_end=args.int_end,
-                                   remote_host=args.remote_host)
-                print(f"OK: правило порта {args.port} создано/обновлено")
-                print_rules(pf.rules())
-            elif args.cmd == "close":
-                r = pf.close_port(args.ref)
-                print(f"OK: правило '{r['alias']}' (порт {r['ext_port']}) отключено")
-            elif args.cmd == "remove":
-                r = pf.remove_port(args.ref)
-                print(f"OK: правило '{r['alias']}' (порт {r['ext_port']}) удалено")
-    except RuntimeError as e:
-        if "login failed" in str(e).lower():
-            print("ОШИБКА ВХОДА", file=sys.stderr)
-            sys.exit(2)
-        raise
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (KeyError, RuntimeError) as e:
-        print(f"ОШИБКА: {e}", file=sys.stderr)
-        sys.exit(1)

@@ -9,48 +9,62 @@
 
 ## Возможности
 
-* **`f680_api.py`** — базовый клиент API:
+* **`f680.client.F680`** — базовый клиент API:
   * 3-шаговый login (SHA256 password + one-time token), logout, cookie-сессия
   * context manager: `with F680() as c:` — авто-login / авто-logout
   * чтение любых data-страниц (wlan, voip, firewall, usb, accessdev, …) с
     парсингом XML в словари
   * таблица подключённых клиентов (IP / MAC / hostname)
-  * CLI: `login`, `logout`, `devices`, `page <tag>`, `raw "<qs>"`, `pages`
-* **`f680_pf.py`** — управление **port forwarding** (реверс-инжиниринг):
-  * `list` — таблица правил (порт, протокол, название, ip:порт, состояние)
-  * `open` — создать/обновить правило (работает с портами и alias, без
-    технических `PtMapping`-id)
-  * `close` — отключить правило (`Enable=0`, правило остаётся)
-  * `remove` — удалить правило
+* **`f680.portforward.PortForward`** — управление **port forwarding**:
+  * `rules` / `open_port` / `close_port` / `remove_port` / `set_alias`
   * диапазоны портов, протоколы tcp/udp/both, ограничение внешнего IP
   * под капотом: one-time `_sessionTmpToken` из menuView +
     `Check: base64(RSA-PKCS1v15(SHA256(body)))`
+* **CLI** (отдельно от Python API):
+  * `f680-api` / `python -m f680.cli.api` — `login`, `logout`, `devices`,
+    `page <tag>`, `raw "<qs>"`, `pages`
+  * `f680-pf` / `python -m f680.cli.pf` — `list`, `open`, `close`, `remove`,
+    `logout`
 
 ## Структура репозитория
 
 ```
 f680-router/
-├── f680_config.py           # конфигурация: .env + env-переменные (F680_BASE/USERNAME/PASSWORD)
-├── f680_api.py              # базовый клиент API (login, страницы, парсинг)
-├── f680_pf.py               # port forwarding клиент (CLI + Python API)
-├── .env.example             # шаблон настроек (скопировать в .env)
+├── f680/                        # пакет
+│   ├── __init__.py              #   публичный API: F680, PortForward
+│   ├── config.py                #   конфигурация: .env + env (F680_BASE/USERNAME/PASSWORD)
+│   ├── client.py                #   базовый клиент API (login, страницы, парсинг XML)
+│   ├── portforward.py           #   port forwarding (token + RSA Check, модель правил)
+│   └── cli/                     #   командные интерфейсы (argparse)
+│       ├── api.py               #   f680-api:  python -m f680.cli.api
+│       └── pf.py                #   f680-pf:   python -m f680.cli.pf
 ├── tests/
 │   └── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 ├── docs/
-│   ├── API.md               # документация по API роутера (auth, endpoints, XML)
-│   └── PORT_FORWARDING.md   # протокол port forwarding (токены, RSA, модель правил)
+│   ├── API.md                   # документация по API роутера (auth, endpoints, XML)
+│   └── PORT_FORWARDING.md       # протокол port forwarding (токены, RSA, модель правил)
+├── .env.example                 # шаблон настроек (скопировать в .env)
+├── pyproject.toml               # установка пакета + консольные скрипты
 ├── requirements.txt
 └── README.md
 ```
 
+Python API и CLI разделены: `f680/client.py` и `f680/portforward.py` —
+чистые библиотеки без argparse/печати, `f680/cli/*` — тонкий слой команд
+сверху.
+
 ## Установка
 
 ```bash
-pip install -r requirements.txt     # нужен только pycryptodome
+# вариант 1: как пакет (даёт консольные скрипты f680-api / f680-pf)
+pip install -e .
+
+# вариант 2: просто из каталога (python -m f680.cli.api ...)
+pip install -r requirements.txt
 ```
 
-Python 3.8+ (стандартная библиотека + pycryptodome; python-dotenv опционален —
-без него `.env` парсится встроенным мини-парсером).
+Python 3.8+. Зависимости: pycryptodome (обязательно), python-dotenv
+(опционален — без него `.env` парсится встроенным мини-парсером).
 
 ### Настройки (.env)
 
@@ -73,26 +87,26 @@ CLI-флаги `--base` / `--user` / `--pass` переопределяют вс�
 
 ```bash
 # подключённые клиенты
-python3 f680_api.py devices
+f680-api devices          # или: python -m f680.cli.api devices
 
 # список известных страниц
-python3 f680_api.py pages
+f680-api pages
 
 # дамп любой data-страницы
-python3 f680_api.py page wlan
-python3 f680_api.py page firewall
+f680-api page wlan
+f680-api page firewall
 
 # сырой запрос
-python3 f680_api.py raw "?_type=menuData&_tag=wan_homepage_lua.lua"
+f680-api raw "?_type=menuData&_tag=wan_homepage_lua.lua"
 ```
 
 ```bash
 # правила проброса портов
-python3 f680_pf.py list
-python3 f680_pf.py open 3000 192.168.1.3 3000 "PC | Open WebUI"
-python3 f680_pf.py open 22 192.168.1.2 22 --proto tcp
-python3 f680_pf.py close 3000
-python3 f680_pf.py remove "PC | Open WebUI"
+f680-pf list
+f680-pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
+f680-pf open 22 192.168.1.2 22 --proto tcp
+f680-pf close 3000
+f680-pf remove "PC | Open WebUI"
 ```
 
 Все команды CLI используют context manager — логин и **автоматический
@@ -101,7 +115,7 @@ logout** (даже при ошибке), на роутере не висит м�
 ### Использование как библиотеки
 
 ```python
-from f680_api import F680
+from f680 import F680
 
 with F680() as c:                      # авто-login / авто-logout
     devs = c.connected_devices()
@@ -109,7 +123,7 @@ with F680() as c:                      # авто-login / авто-logout
 ```
 
 ```python
-from f680_pf import PortForward
+from f680 import PortForward
 
 with PortForward() as pf:
     for r in pf.rules():

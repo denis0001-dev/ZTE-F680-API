@@ -1,12 +1,12 @@
 """
-f680_config.py — конфигурация: .env + переокрющие env-переменные.
+f680.config — конфигурация: .env + переопределение env-переменными.
 
 Чувствительные данные (IP роутера, логин, пароль) вынесены в .env:
   cp .env.example .env   # и отредактируй
 
-Приоритет: переменные окружения > .env (рядом со скриптом, затем CWD) >
+Приоритет: переменные окружения > .env (корень репо, затем CWD) >
 значения по умолчанию. Без .env всё работает по умолчанию:
-  base http://192.168.1.1, пользователь mgts.
+  base http://192.168.1.1, пользователь mgts (пароль обязателен).
 """
 
 import os
@@ -23,11 +23,11 @@ DEFAULT_PASSWORD = ""     # без .env пароль обязателен (F680_
 
 
 def _load_env_files():
-    """Загрузить .env: сначала рядом с этим модулем (репо), потом CWD."""
+    """Загрузить .env: сначала в корне проекта (рядом с пакетом), потом CWD."""
     if load_dotenv is None:
         return
     for path in (
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
         ".env",
     ):
         try:
@@ -52,7 +52,8 @@ def _load_env_fallback(path):
 
 _load_env_files()
 if load_dotenv is None:
-    _load_env_fallback(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    _load_env_fallback(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
     _load_env_fallback(os.path.join(os.getcwd(), ".env"))
 
 # ---------------------------------------------------------------------------
