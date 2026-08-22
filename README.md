@@ -24,23 +24,34 @@
   * `unescape_stable()` — раскрывает двойное HTML-экранирование значений
 * **`f680.portforward.PortForward`** — управление **port forwarding**:
   * `rules` / `open_port` / `close_port` / `enable_port` / `remove_port` / `set_alias`
+    / `update_port` (изменить любые поля существующего правила)
   * диапазоны портов, протоколы tcp/udp/both, ограничение внешнего IP
   * под капотом: one-time `_sessionTmpToken` из menuView +
     `Check: base64(RSA-PKCS1v15(SHA256(body)))`
 * **`f680.dhcp.Dhcp`** — статические **DHCP-привязки** (MAC → IP):
   * `reservations()` / `active_hosts()` / `set_reservation()` /
-    `remove_reservation()` / `rename_reservation()`
+    `remove_reservation()` / `rename_reservation()` /
+    `update_reservation` (изменить IP/MAC/имя существующей привязки)
   * тот же протокол, что и port forwarding: one-time токен `lanMgrIpv4` +
     RSA-подпись; ретраи на коммит-лаг `IF_ERRORID=-257`
   * ограничение: имя привязки ≤ **10 символов**
 * **CLI** (отдельно от Python API) — **единый `f680`**
   * `f680` / `python -m f680` — все команды роутера в одном:
-    `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|rename`,
-    `dhcp list|leases|add|remove|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
+    `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|modify|rename`,
+    `dhcp list|leases|add|remove|modify|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
     `login`, `logout`, `reboot`, `reset`
-  * деструктивные действия (`reboot`, `reset`, `ports remove`, `dhcp remove`)
-    просят подтверждение в терминале: нажать `y` (без Enter); `-y / --yes` —
-    пропустить (для скриптов). В Python API подтверждений нет.
+  * ссылки на правила — по **№ из списка**, внешнему порту, IP/MAC, стабильному
+    id (`DEV.NAT.PtMapping1`, `DEV.V4DHCP...Bind3`) или названию
+  * перед изменением показывает правило, после — сверяет по стабильному id,
+    что изменена именно та запись (защита от «перескакивающих» индексов)
+  * деструктивные действия (`reboot`, `reset`, `ports remove`, `dhcp remove`,
+    `ports modify`, `dhcp modify`) просят подтверждение в терминале:
+    нажать `y` (без Enter); `-y / --yes` — пропустить (для скриптов).
+    В Python API подтверждений нет.
+  * цвета — только в терминале (TTY); в трубе/пайпе вывод чистый.
+    `F680_COLOR=1/0` — принудительно, `NO_COLOR` — выключить
+  * ошибки — человекочитаемо (`✗ сообщение` + `→ подсказка`), Ctrl+C —
+    «прервано» с exit 130 без traceback
 * **`f680.macvendor`** — оффлайн-определение вендора устройства:
   * OUI-таблица по первым 3 байтам MAC + эвристики по hostname
   * `mac_vendor(mac)`, `hostname_hint(hostname)`, `guess_device(mac, host)`
@@ -57,7 +68,8 @@ f680-router/
 │   ├── dhcp.py                  #   DHCP-привязки (token + RSA Check, ретраи, модель правил)
 │   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
 │   └── cli/                     #   командный интерфейс (argparse)
-│       └── main.py              #   f680: python -m f680
+│       ├── main.py              #     f680: python -m f680
+│       └── ui.py                #     цвета (TTY), pretty-ошибки, иконки
 ├── tests/
 │   ├── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 │   └── test_dhcp_integration.py # сквозной тест: add bind → verify → delete
@@ -129,8 +141,10 @@ f680 raw "?_type=menuData&_tag=wan_homepage_lua.lua"   # сырой запрос
 f680 dhcp list                       # все привязки
 f680 dhcp leases                     # кто реально получил IP (DHCP-аренды)
 f680 dhcp add 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
+f680 dhcp modify 4 --name Mac         # № из списка (см. dhcp list)
+f680 dhcp modify 192.168.1.6 --name Macbook
 f680 dhcp rename 192.168.1.6 Mac     # имя <= 10 символов!
-f680 dhcp remove 192.168.1.6         # спросит y/n
+f680 dhcp remove 1 -y                 # № или IP/MAC/id/имя; спросит y/n
 ```
 
 ```bash
@@ -138,6 +152,8 @@ f680 dhcp remove 192.168.1.6         # спросит y/n
 f680 ports list
 f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
 f680 ports add 22 192.168.1.2 22 --proto tcp
+f680 ports modify 1 --proto tcp --int-port 2223   # № из списка
+f680 ports modify 2222 --port 22220              # или внешний порт
 f680 ports disable 3000              # отключить (правило остаётся)
 f680 ports enable 3000               # включить обратно
 f680 ports remove "PC | Open WebUI"  # спросит y/n
@@ -161,7 +177,19 @@ logout** (даже при ошибке), на роутере не висит м�
 `devices`, `report`, `page`, `ports list`, `ports add`, `dhcp list`,
 `dhcp leases`, `dhcp add`. Ошибки — в stderr, exit code: 0 = OK,
 1 = ошибка, 2 = не удалось залогиниться, 3 = действие отменено
-(не подтверждено).
+(не подтверждено), 130 = прервано (Ctrl+C).
+
+### Ссылки на правила
+
+`enable` / `disable` / `remove` / `modify` / `rename` принимают:
+
+* **№ из списка** (1..N в `ports list` / `dhcp list`) — самый простой вариант
+* для `ports`: внешний порт, стабильный id (`DEV.NAT.PtMapping1`) или название
+* для `dhcp`: IP, MAC, стабильный id (`DEV.V4DHCP.Server.Pool1.Bind3`) или название
+
+Перед изменением CLI показывает правило, после — перечитывает его по
+**стабильному id** и сверяет ожидаемые значения, поэтому «перескочившие»
+индексы не приведут к изменению не той записи.
 
 ### Использование как библиотеки
 
@@ -192,16 +220,33 @@ with PortForward() as pf:
     for r in pf.rules():
         print(r["alias"], r["ext_port"], r["int_ip"])
     pf.open_port(8080, "192.168.1.2", 8080, proto="both", alias="web")
+    pf.update_port("web", proto="tcp", int_port=8081)  # точечное изменение
     pf.close_port("web")
     pf.enable_port("web")
     pf.remove_port(8080)
 ```
+
+Ошибки API — иерархия `F680Error` → `LoginFailed` / `RouterError`
+(подклассы `RuntimeError` — старый код продолжает работать):
 
 Чтобы сессию **оставить** (без авто-logout), просто зайди вручную:
 
 ```python
 c = F680()
 c.login()      # и не используй with — сессия жива
+```
+
+```python
+from f680 import F680Error, LoginFailed, RouterError
+
+try:
+    ...
+except LoginFailed:
+    ...
+except RouterError as e:
+    ...
+except F680Error:
+    ...
 ```
 
 ## Учётные данные

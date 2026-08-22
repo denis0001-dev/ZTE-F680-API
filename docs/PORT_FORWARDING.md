@@ -140,14 +140,19 @@ with PortForward() as pf:          # авто-login/logout
     pf.enable_port("web")          # Enable=1, правило снова активно
     pf.remove_port(8080)           # Delete
     pf.set_alias("web", "new name")
+    pf.update_port("web", proto="tcp", int_port=8081)  # точечное изменение
 ```
 
 * `open_port` **заменяет** правило, уже занимающее этот внешний порт
   (Apply на существующий id вместо создания нового).
-* `close_port` / `enable_port` / `remove_port` ищут правило по внешнему порту (число,
-  включая попадание в диапазон) или по alias (регистр не важен, точное
-  совпадение).
-* Диапазоны портов: `ext_port_end` / `int_port_end`.
+* `close_port` / `enable_port` / `remove_port` / `set_alias` ищут правило по
+  внешнему порту (число, включая попадание в диапазон), stable id
+  (`DEV.NAT.PtMapping1`) или по alias (регистр не важен, точное совпадение).
+* `update_port(ref, **changes)` — точечное изменение полей существующего
+  правила: `alias`, `proto` (tcp|udp|both), `int_ip`, `remote_host`,
+  `ext_port`, `ext_port_end`, `int_port`, `int_port_end`, `enabled` (bool).
+  Не переданные поля сохраняются; запись (stable id) при этом **не
+  меняется** — это modify, а не «удали и создай».* Диапазоны портов: `ext_port_end` / `int_port_end`.
 * Ограничение внешнего IP: `remote_host` (по умолчанию `0.0.0.0` = любой).
 
 ## 4. CLI

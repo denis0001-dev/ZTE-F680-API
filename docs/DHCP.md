@@ -76,11 +76,17 @@ with Dhcp() as d:
     d.reservations()
     d.set_reservation("192.168.1.6", "1c:f6:4c:a0:cc:96", name="Macbook")
     d.rename_reservation("192.168.1.6", "Mac")
+    d.update_reservation("192.168.1.6", ip="192.168.1.7")  # точечное изменение
     d.remove_reservation("192.168.1.6")
     d.active_hosts()
 ```
 
-CLI: `f680 dhcp list|leases|add|remove|rename` (см. README).
+`set_reservation` / `update_reservation` / `remove_reservation` / `rename_reservation`
+ищут привязку по IP, MAC (регистр не важен) или stable id
+(`DEV.V4DHCP.Server.Pool1.Bind3`). `update_reservation(ref, ip=, mac=, name=)`
+заменяет только переданные поля, stable id записи при этом **не меняется**.
+
+CLI: `f680 dhcp list|leases|add|remove|modify|rename` (см. README).
 
 ## 5. Тесты
 

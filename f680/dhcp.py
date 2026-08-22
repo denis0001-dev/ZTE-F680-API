@@ -19,7 +19,7 @@ Python API:
 import re
 import urllib.parse
 
-from .client import F680
+from .client import F680, F680Error, LoginFailed, RouterError
 from .config import BASE as _DEFAULT_BASE, USERNAME as _DEFAULT_USER, \
     PASSWORD as _DEFAULT_PASS
 from .portforward import parse_page_token, rsa_check
@@ -54,7 +54,7 @@ class Dhcp:
 
     def login(self):
         if not self.c.login():
-            raise RuntimeError("login failed")
+            raise LoginFailed("не удалось залогиниться в роутер")
 
     def logout(self):
         self.c.logout()
@@ -75,10 +75,10 @@ class Dhcp:
         """Fetch the menuView page, grab a fresh one-time token."""
         r = self.c.raw(f"/?_type=menuView&_tag={VIEW_TAG}")
         if "404 Not Found" in r:
-            raise RuntimeError("menuView 404 — страница недоступна?")
+            raise F680Error("menuView 404 — страница недоступна?")
         self.token = parse_page_token(r)
         if not self.token:
-            raise RuntimeError("не найден одноразовый токен страницы")
+            raise F680Error("не найден одноразовый токен страницы")
         return self.token
 
     def _post(self, action, instid="-1", fields=None):
@@ -109,7 +109,7 @@ class Dhcp:
             err = out.get("IF_ERRORSTR", "").strip()
             if not err or err.upper() == "SUCC":
                 return out
-            last = RuntimeError(
+            last = RouterError(
                 f"ошибка роутера (IF_ERRORID={out.get('IF_ERRORID')}): {err}")
             if i < 3:
                 time.sleep(3)
@@ -121,7 +121,7 @@ class Dhcp:
         self._view()
         xml = self.c.get_data(DATA_TAG)
         if self.c.has_error(xml):
-            raise RuntimeError("ошибка при чтении привязок: " + xml[:200])
+            raise F680Error("ошибка при чтении привязок: " + xml[:200])
         out = []
         for d in self.c.parse_instances(xml):
             out.append({
@@ -138,7 +138,7 @@ class Dhcp:
         self._view()
         xml = self.c.get_data(HOSTINFO_TAG)
         if self.c.has_error(xml):
-            raise RuntimeError("ошибка при чтении аренд: " + xml[:200])
+            raise F680Error("ошибка при чтении аренд: " + xml[:200])
         out = []
         for d in self.c.parse_instances(xml):
             out.append({
@@ -235,7 +235,7 @@ class Dhcp:
                 raise
         new_id = resp.get("_InstID") or resp.get("INSTIDENTITY")
         if not new_id or "-1" in str(new_id):
-            raise RuntimeError("роутер ответил SUCC, но новый inst id не найден")
+            raise F680Error("роутер ответил SUCC, но новый inst id не найден")
         return new_id
 
     def remove_reservation(self, ref):
@@ -254,5 +254,27 @@ class Dhcp:
                 f"а роутер принимает не более {NAME_MAX_LEN}")
         r = self._find_retry(ref)
         fields = {"Name": new_name, "IPAddr": r["ip"], "MACAddr": r["mac"]}
+        self._post("Apply", instid=r["id"], fields=fields)
+        return r
+
+    def update_reservation(self, ref, ip=None, mac=None, name=None):
+        """Изменить любые поля существующей привязки (modify).
+
+        `ref` — IP, MAC или stable id (см. `_find`). Указанные поля
+        заменяются, остальные сохраняются. Возвращает привязку
+        ДО изменения. Stable id (BindN) не меняется — та же запись.
+        """
+        if mac:
+            mac = mac.lower()
+        if name is not None and len(name) > NAME_MAX_LEN:
+            raise ValueError(
+                f"имя {name!r} — {len(name)} символов, "
+                f"а роутер принимает не более {NAME_MAX_LEN}")
+        r = self._find_retry(ref)
+        fields = {
+            "Name": name if name is not None else r["name"],
+            "IPAddr": ip if ip is not None else r["ip"],
+            "MACAddr": mac if mac is not None else r["mac"],
+        }
         self._post("Apply", instid=r["id"], fields=fields)
         return r

@@ -25,7 +25,7 @@ import urllib.parse
 from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
 
-from .client import F680
+from .client import F680, F680Error, LoginFailed, RouterError
 from .config import BASE as _DEFAULT_BASE, USERNAME as _DEFAULT_USER, \
     PASSWORD as _DEFAULT_PASS
 
@@ -106,7 +106,7 @@ class PortForward:
 
     def login(self):
         if not self.c.login():
-            raise RuntimeError("login failed")
+            raise LoginFailed("не удалось залогиниться в роутер")
 
     def logout(self):
         self.c.logout()
@@ -127,10 +127,10 @@ class PortForward:
         """Fetch the menuView page, grab a fresh one-time token."""
         r = self.c.raw(f"/?_type=menuView&_tag={VIEW_TAG}")
         if "404 Not Found" in r:
-            raise RuntimeError("menuView 404 — страница недоступна?")
+            raise F680Error("menuView 404 — страница недоступна?")
         self.token = parse_page_token(r)
         if not self.token:
-            raise RuntimeError("не найден одноразовый токен страницы")
+            raise F680Error("не найден одноразовый токен страницы")
         return self.token
 
     def _post(self, action, instid="-1", fields=None):
@@ -151,7 +151,7 @@ class PortForward:
         out = dict(re.findall(r"<(\w+)>([^<]*)</\1>", resp))
         err = htmlmod.unescape(out.get("IF_ERRORSTR", "")).strip()
         if err and err.upper() != "SUCC":
-            raise RuntimeError(
+            raise RouterError(
                 f"ошибка роутера (IF_ERRORID={out.get('IF_ERRORID')}): {err}")
         return out
 
@@ -160,7 +160,7 @@ class PortForward:
         self._view()
         xml = self.c.get_data(DATA_TAG)
         if self.c.has_error(xml):
-            raise RuntimeError("ошибка при чтении правил: " + xml[:200])
+            raise F680Error("ошибка при чтении правил: " + xml[:200])
         out = []
         for d in self.c.parse_instances(xml):
             alias = unescape_stable(d.get("Alias", ""))
@@ -180,9 +180,10 @@ class PortForward:
         return out
 
     def _find(self, ref):
-        """Найти правило по внешнему порту (число) или по названию."""
+        """Найти правило по внешнему порту (число), stable id или названию."""
         rules = self.rules()
-        if isinstance(ref, int) or str(ref).isdigit():
+        ref = str(ref).strip()
+        if ref.isdigit():
             n = int(ref)
             for r in rules:
                 if r["ext_port"] is None:
@@ -191,8 +192,9 @@ class PortForward:
                    (r["ext_port"] <= n <= (r["ext_port_end"] or r["ext_port"])):
                     return r
             raise KeyError(f"не найдено правило с портом {n}")
-        ref = str(ref)
         for r in rules:
+            if ref == r["id"]:
+                return r
             if ref.upper() == r["alias"].upper():
                 return r
         raise KeyError(f"не найдено правило '{ref}'")
@@ -258,5 +260,45 @@ class PortForward:
         fields = {k: unescape_stable(str(v)) for k, v in r["raw"].items()}
         fields.pop("_instid", None)
         fields["Alias"] = new_alias
+        self._post("Apply", instid=r["id"], fields=fields)
+        return r
+
+    def update_port(self, ref, **changes):
+        """Изменить любые поля существующего правила (modify).
+
+        `changes` — ключи как в `rules()` без "raw":
+            alias, int_ip, ext_port, ext_port_end, int_port, int_port_end,
+            proto (tcp|udp|both), remote_host, enabled (bool).
+        Остальные поля сохраняются. Возвращает правило ДО изменения.
+        Stable id правила не меняется — это та же запись на роутере.
+        """
+        r = self._find(ref)
+        fields = {k: unescape_stable(str(v)) for k, v in r["raw"].items()}
+        fields.pop("_instid", None)
+        if "alias" in changes and changes["alias"] is not None:
+            fields["Alias"] = changes["alias"]
+        if "proto" in changes and changes["proto"] is not None:
+            fields["Protocol"] = PROTOS[str(changes["proto"]).lower()]
+        if "int_ip" in changes and changes["int_ip"] is not None:
+            fields["InternalClient"] = changes["int_ip"]
+        if "remote_host" in changes and changes["remote_host"] is not None:
+            fields["RemoteHost"] = changes["remote_host"]
+            fields["RemoteHostEndRange"] = changes["remote_host"]
+        if "ext_port" in changes and changes["ext_port"] is not None:
+            n = int(changes["ext_port"])
+            fields["ExternalPort"] = n
+            if "ext_port_end" not in changes or changes["ext_port_end"] is None:
+                fields["ExternalPortEndRange"] = n
+        if "ext_port_end" in changes and changes["ext_port_end"] is not None:
+            fields["ExternalPortEndRange"] = int(changes["ext_port_end"])
+        if "int_port" in changes and changes["int_port"] is not None:
+            n = int(changes["int_port"])
+            fields["InternalPort"] = n
+            if "int_port_end" not in changes or changes["int_port_end"] is None:
+                fields["InternalPortEndRange"] = n
+        if "int_port_end" in changes and changes["int_port_end"] is not None:
+            fields["InternalPortEndRange"] = int(changes["int_port_end"])
+        if "enabled" in changes and changes["enabled"] is not None:
+            fields["Enable"] = int(bool(changes["enabled"]))
         self._post("Apply", instid=r["id"], fields=fields)
         return r

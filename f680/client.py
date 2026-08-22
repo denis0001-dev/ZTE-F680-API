@@ -48,6 +48,23 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126 Safari/537.36"
 )
 
+
+class F680Error(RuntimeError):
+    """Базовая ошибка клиента f680.
+
+    Все ошибки, брошенные API (логин, роутер, сеть), — её наследники;
+    CLI показывает их красиво. Backward-compat: это подкласс RuntimeError.
+    """
+
+
+class LoginFailed(F680Error):
+    """Не удалось залогиниться в роутер."""
+
+
+class RouterError(F680Error):
+    """Роутер ответил ошибкой (IF_ERRORID / IF_ERRORSTR)."""
+
+
 # Page tags known to exist on this device.
 PAGES = {
     "devinfo": "devinfo_homepage_lua.lua",
@@ -76,7 +93,7 @@ class F680:
         self.username = username
         self.password = password
         if not self.password:
-            raise RuntimeError(
+            raise F680Error(
                 "пароль не задан: создай .env (см. .env.example) или "
                 "укажи F680_PASSWORD / --pass")
         self.timeout = timeout
@@ -199,7 +216,7 @@ class F680:
         don't linger on the router.
         """
         if not self.login():
-            raise RuntimeError("login failed")
+            raise LoginFailed("не удалось залогиниться в роутер")
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -221,10 +238,10 @@ class F680:
 
         view = self.raw("/?_type=menuView&_tag=rebootAndReset")
         if "404 Not Found" in view:
-            raise RuntimeError("menuView 404 — страница недоступна?")
+            raise F680Error("menuView 404 — страница недоступна?")
         token = parse_page_token(view)
         if not token:
-            raise RuntimeError("не найден одноразовый токен страницы")
+            raise F680Error("не найден одноразовый токен страницы")
 
         body = f"IF_ACTION={action}&_sessionTOKEN={urllib.parse.quote(token)}"
         resp = self._request(
@@ -238,7 +255,7 @@ class F680:
         out = dict(re.findall(r"<(\w+)>([^<]*)</\1>", resp))
         err = out.get("IF_ERRORSTR", "").strip()
         if err and err.upper() != "SUCC":
-            raise RuntimeError(
+            raise RouterError(
                 f"ошибка роутера (IF_ERRORID={out.get('IF_ERRORID')}): {err}")
         return out
 

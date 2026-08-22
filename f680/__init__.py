@@ -6,16 +6,17 @@
 Единый CLI (с версии 1.1):
     f680 <команда> ...          # или: python -m f680 <команда> ...
 
-Команды: status, devices, report, ports (list/add/enable/disable/remove/rename),
-dhcp (list/leases/add/remove/rename), page, raw, pages, reboot, reset,
+Команды: status, devices, report, ports (list/add/enable/disable/remove/modify/rename),
+dhcp (list/leases/add/remove/modify/rename), page, raw, pages, reboot, reset,
 login, logout. Подробности: `f680 --help`.
 """
 
-from .client import F680, PAGES
+from .client import F680, F680Error, LoginFailed, RouterError, PAGES
 from .portforward import PortForward
 from .dhcp import Dhcp
 from .macvendor import mac_vendor, hostname_hint, guess_device
 
-__all__ = ["F680", "PortForward", "Dhcp", "PAGES",
+__all__ = ["F680", "F680Error", "LoginFailed", "RouterError",
+           "PortForward", "Dhcp", "PAGES",
            "mac_vendor", "hostname_hint", "guess_device"]
-__version__ = "1.2.0"
+__version__ = "1.3.0"
