@@ -19,4 +19,4 @@ from .macvendor import mac_vendor, hostname_hint, guess_device
 __all__ = ["F680", "F680Error", "LoginFailed", "RouterError",
            "PortForward", "Dhcp", "PAGES",
            "mac_vendor", "hostname_hint", "guess_device"]
-__version__ = "1.3.0"
+__version__ = "1.4.0"

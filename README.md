@@ -39,7 +39,11 @@
   * `f680` / `python -m f680` — все команды роутера в одном:
     `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|modify|rename`,
     `dhcp list|leases|add|remove|modify|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
-    `login`, `logout`, `reboot`, `reset`
+    `login`, `logout`, `reboot`, `reset`, `help [команда [подкоманда]]`
+  * `ports add` / `ports modify` — только флаги: `--port N | N-M`, `--ip IP`,
+    `--in-port N | N-M` (+ `--port-end`, `--in-port-end`, `--name`, `--proto`,
+    `--from`). Диапазон `1000-2000` можно записать прямо в `--port`
+  * подробная справка: `f680 help` и `f680 help <команда> [подкоманда]`
   * ссылки на правила — по **№ из списка**, внешнему порту, IP/MAC, стабильному
     id (`DEV.NAT.PtMapping1`, `DEV.V4DHCP...Bind3`) или названию
   * перед изменением показывает правило, после — сверяет по стабильному id,
@@ -148,17 +152,19 @@ f680 dhcp remove 1 -y                 # № или IP/MAC/id/имя; спрос�
 ```
 
 ```bash
-# правила проброса портов (NAT)
+# правила проброса портов (NAT) — все параметры через флаги
 f680 ports list
-f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
-f680 ports add 22 192.168.1.2 22 --proto tcp
-f680 ports modify 1 --proto tcp --int-port 2223   # № из списка
+f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"
+f680 ports add --port 22 --ip 192.168.1.2 --in-port 22 --proto tcp
+f680 ports add --port 50000-60000 --ip 192.168.1.5 --in-port 5000-15000 --proto udp  # диапазоны
+f680 ports modify 1 --proto tcp --in-port 2223   # № из списка
 f680 ports modify 2222 --port 22220              # или внешний порт
 f680 ports disable 3000              # отключить (правило остаётся)
 f680 ports enable 3000               # включить обратно
 f680 ports remove "PC | Open WebUI"  # спросит y/n
 f680 ports remove "PC | Open WebUI" -y
 f680 ports rename 3000 "New Name"
+f680 help ports add                  # подробная справка по любой команде
 ```
 
 ```bash

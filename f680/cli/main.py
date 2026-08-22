@@ -13,6 +13,7 @@ f680 — единый CLI для роутера ZTE F680 (DST/MGTS).
     report / all               полный отчёт: status + devices + ports + dhcp
     ports  list|add|enable|disable|remove|modify|rename   проброс портов (NAT)
     dhcp   list|leases|add|remove|modify|rename           статические DHCP-привязки (MAC -> IP)
+    help <команда> [подкоманда]                          справка (f680 help ports add)
     page <tag>                 дамп data-страницы
     raw <qs>                   сырой запрос
     pages                      список известных страниц
@@ -46,11 +47,12 @@ ports modify, dhcp modify) просят подтверждение в терми
 Примеры:
     f680 devices
     f680 ports list
-    f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
+    f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"
     f680 ports modify 1 --proto tcp --name "PC | SSH2"
-    f680 ports modify 2222 --int-port 2223
+    f680 ports modify 2222 --in-port 2223
     f680 ports disable 2
     f680 ports remove "RPI | SSH"
+    f680 help ports add
     f680 dhcp list
     f680 dhcp modify 192.168.1.6 --name Mac
     f680 dhcp add 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
@@ -491,10 +493,17 @@ def _cmd_ports(pf, args):
                 print(ui.dim("№ — порядковый номер, подходит для "
                              "enable/disable/remove/modify"))
     elif sub == "add":
-        rid = pf.open_port(args.port, args.ip, args.int_port,
+        if args.port is None or args.ip is None or args.in_port is None:
+            ui.fail("не хватает обязательных аргументов",
+                    "формат: f680 ports add --port N --ip IP --in-port N "
+                    "[--name TEXT] [--proto tcp|udp|both] "
+                    "[--port-end N] [--in-port-end N] [--from IP] "
+                    "(диапазоны: --port 1000-2000)")
+            return 1
+        rid = pf.open_port(args.port, args.ip, args.in_port,
                            proto=args.proto, alias=args.name,
-                           ext_port_end=args.ext_end,
-                           int_port_end=args.int_end,
+                           ext_port_end=args.port_end,
+                           int_port_end=args.in_port_end,
                            remote_host=args.remote_host)
         print(ui.green("✓ ") + f"правило порта {args.port} "
               f"создано/обновлено (id: {rid})",
@@ -554,20 +563,20 @@ def _cmd_ports(pf, args):
         if args.port is not None:
             changes["ext_port"] = args.port
             expected["ext_port"] = args.port
-        if args.ext_end is not None:
-            changes["ext_port_end"] = args.ext_end
+        if args.port_end is not None:
+            changes["ext_port_end"] = args.port_end
         elif args.port is not None:
             expected["ext_port_end"] = args.port
         if args.ip is not None:
             changes["int_ip"] = args.ip
             expected["int_ip"] = args.ip
-        if args.int_port is not None:
-            changes["int_port"] = args.int_port
-            expected["int_port"] = args.int_port
-        if args.int_end is not None:
-            changes["int_port_end"] = args.int_end
-        elif args.int_port is not None:
-            expected["int_port_end"] = args.int_port
+        if args.in_port is not None:
+            changes["int_port"] = args.in_port
+            expected["int_port"] = args.in_port
+        if args.in_port_end is not None:
+            changes["int_port_end"] = args.in_port_end
+        elif args.in_port is not None:
+            expected["int_port_end"] = args.in_port
         if args.remote_host is not None:
             changes["remote_host"] = args.remote_host
         if args.enable is not None:
@@ -576,7 +585,8 @@ def _cmd_ports(pf, args):
         if not changes:
             ui.fail("нечего изменять",
                     "укажите хотя бы один из: --name --proto --port "
-                    "--ext-end --ip --int-port --int-end --from --enable/--disable")
+                    "--port-end --ip --in-port --in-port-end --from "
+                    "--enable/--disable")
             return 1
         what = ", ".join(f"{k}={v}" for k, v in changes.items())
         if not confirm(f"Изменить правило '{r['alias']}'? {what}", args.yes):
@@ -704,18 +714,55 @@ def _cmd_dhcp(d, args):
 REF_PORT = "№ из списка, внешний порт, id (DEV.NAT...) или название"
 REF_DHCP = "№ из списка, IP, MAC, id (DEV.V4DHCP...) или название"
 
+PORT_ARG = ("порт или диапазон 1000-2000 "
+            "(одно значение = и начало, и конец диапазона)")
+INPORT_ARG = ("внутренний порт или диапазон 1000-2000 "
+              "(одно значение = и начало, и конец диапазона)")
+
+
+def parse_port_range(s):
+    """`'3000'` -> (3000, None); `'1000-2000'` -> (1000, 2000)."""
+    m = re.fullmatch(r"(\d+)(?:-(\d+))?", str(s).strip())
+    if not m:
+        raise ValueError(f"нестандартный формат порта: {s!r} "
+                         f"(ожидается 3000 или 1000-2000)")
+    a, b = int(m.group(1)), m.group(2)
+    b = int(b) if b else None
+    if b is not None and b < a:
+        raise ValueError(f"конец диапазона {b} < начало {a}")
+    return a, b
+
+
+def _apply_port_ranges(args):
+    """Распаковать '1000-2000' из --port/--in-port в *_end, если --port-end
+    / --in-port-end не заданы явно. Работает для add и modify."""
+    for flag, end_attr in (("port", "port_end"),
+                           ("in_port", "in_port_end")):
+        raw = getattr(args, flag, None)
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            start, end = parse_port_range(raw)
+            setattr(args, flag, start)
+            if getattr(args, end_attr, None) is None:
+                setattr(args, end_attr, end)
+        elif getattr(args, end_attr, None) is None:
+            setattr(args, end_attr, raw)
+
 EPILOG = """
 примеры:
   f680 devices                          # все клиенты + вендоры
   f680 devices --json
   f680 report                           # полный отчёт одним заходом
   f680 ports list                       # правила проброса портов
-  f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
+  f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"
+  f680 ports add --port 1000-2000 --ip 192.168.1.3 --in-port 1000-2000
   f680 ports modify 1 --proto tcp      # № из списка
-  f680 ports modify 2222 --int-port 2223
+  f680 ports modify 2222 --in-port 2223
   f680 ports disable 2
   f680 ports remove "RPI | SSH"        # спросит y/n
   f680 ports remove "RPI | SSH" -y
+  f680 help ports add                  # подробная справка по команде
   f680 dhcp list                        # статические DHCP-привязки
   f680 dhcp modify 192.168.1.6 --name Mac
   f680 dhcp add 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
@@ -734,17 +781,23 @@ EPILOG = """
 стабильному id, что изменена именно та запись.
 
 опции для ports add:
+  --port N | N-M         внешний порт или диапазон (обязательно)
+  --port-end N           конец диапазона (если не встроен в --port)
+  --ip IP                IP устройства (обязательно)
+  --in-port N | N-M      внутренний порт или диапазон (обязательно)
+  --in-port-end N        конец внутреннего диапазона
+  --name TEXT            название правила
   --proto tcp|udp|both   протокол (по умолчанию both)
-  --ext-end N            конец диапазона внешних портов
-  --int-end N            конец диапазона внутренних портов
   --from IP              ограничить внешний IP (по умолчанию любой)
 
-опции для ports modify REF:
-  --name TEXT --proto tcp|udp|both --port N --ext-end N
-  --ip IP --int-port N --int-end N --from IP --enable/--disable
+опции для ports modify REF (задаётся только то, что меняется):
+  --name TEXT --proto tcp|udp|both --port N | N-M --port-end N
+  --ip IP --in-port N | N-M --in-port-end N --from IP --enable/--disable
 
 опции для dhcp modify REF:
   --ip IP --mac MAC --name TEXT  (имя <= 10 символов)
+
+подробная справка по любой команде: f680 help <команда> [подкоманда].
 
 настройки: .env (F680_BASE / F680_USERNAME / F680_PASSWORD) или флаги
 --base / --user / --pass (ставятся ПЕРЕД командой).
@@ -788,25 +841,40 @@ def build_parser():
     p.add_argument("-j", "--json", action="store_true", help="вывод в JSON")
 
     # -- ports -------------------------------------------------------------
-    p = sub.add_parser("ports", help="проброс портов (NAT)")
+    p = sub.add_parser("ports", help="проброс портов (NAT)",
+                       description="Проброс портов (NAT). "
+                       "Подкоманды: list, add, enable, disable, remove, "
+                       "modify, rename. Подробности: f680 help ports add.")
     ps = p.add_subparsers(dest="action", required=True, metavar="ДЕЙСТВИЕ")
 
     psl = ps.add_parser("list", help="показать все правила")
     psl.add_argument("-j", "--json", action="store_true", help="вывод в JSON")
 
-    psa = ps.add_parser("add", help="создать/обновить и включить правило")
-    psa.add_argument("port", type=int, help="внешний порт")
-    psa.add_argument("ip", help="IP устройства в локальной сети")
-    psa.add_argument("int_port", type=int, help="внутренний порт")
-    psa.add_argument("name", nargs="?", default=None, help="название правила")
+    psa = ps.add_parser(
+        "add", help="создать/обновить и включить правило",
+        description=("Создать (или заменить) и включить правило проброса.\n\n"
+                     "f680 ports add --port N --ip IP --in-port N "
+                     "[--name TEXT]\n"
+                     "              [--proto tcp|udp|both] [--port-end N] "
+                     "[--in-port-end N]\n"
+                     "              [--from IP] [-y]\n\n"
+                     "--port / --in-port принимают одно значение (3000) или\n"
+                     "диапазон (1000-2000) — конец диапазона из него "
+                     "заполняется автоматически, если --port-end / --in-port-end "
+                     "не заданы явно."),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    psa.add_argument("--port", help=f"внешний порт: {PORT_ARG}")
+    psa.add_argument("--port-end", type=int,
+                     help="конец диапазона внешних портов (если --port — один порт, равняется ему)")
+    psa.add_argument("--ip", help="IP устройства в локальной сети, напр. 192.168.1.2")
+    psa.add_argument("--in-port", help=f"внутренний порт: {INPORT_ARG}")
+    psa.add_argument("--in-port-end", type=int,
+                     help="конец диапазона внутренних портов")
+    psa.add_argument("--name", help="название правила (по умолчанию 'port N')")
     psa.add_argument("--proto", default="both", choices=sorted(PROTOS),
                      help="протокол [default: both]")
-    psa.add_argument("--ext-end", type=int,
-                     help="конец диапазона внешних портов")
-    psa.add_argument("--int-end", type=int,
-                     help="конец диапазона внутренних портов")
     psa.add_argument("--from", dest="remote_host", default="0.0.0.0",
-                     help="ограничить внешний IP [default: 0.0.0.0]")
+                     help="ограничить внешний IP [default: 0.0.0.0 — любой]")
     psa.add_argument("-j", "--json", action="store_true", help="вывод в JSON")
 
     pfd = ps.add_parser("disable", help="отключить правило (оставить)")
@@ -819,15 +887,25 @@ def build_parser():
     psr.add_argument("ref", help=REF_PORT)
     _add_yes(psr)
 
-    psm = ps.add_parser("modify", help="изменить поля существующего правила")
+    psm = ps.add_parser(
+        "modify", help="изменить поля существующего правила",
+        description=("Изменить один или несколько полей существующего правила.\n\n"
+                     "f680 ports modify REF [--name TEXT] [--proto tcp|udp|both]"
+                     "\n                   [--port N | N-M] [--port-end N]"
+                     "\n                   [--ip IP] [--in-port N | N-M] [--in-port-end N]"
+                     "\n                   [--from IP] [--enable | --disable] [-y]\n\n"
+                     "REF — № из списка, внешний порт, id (DEV.NAT...) или название.\n"
+                     "Задаётся только то, что меняется; остальное сохраняется."),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     psm.add_argument("ref", help=REF_PORT)
     psm.add_argument("--name", help="новое название")
     psm.add_argument("--proto", choices=sorted(PROTOS), help="протокол")
-    psm.add_argument("--port", type=int, help="внешний порт")
-    psm.add_argument("--ext-end", type=int, help="конец внешних портов")
+    psm.add_argument("--port", help=f"внешний порт: {PORT_ARG}")
+    psm.add_argument("--port-end", type=int, help="конец диапазона внешних портов")
     psm.add_argument("--ip", help="внутренний IP")
-    psm.add_argument("--int-port", type=int, help="внутренний порт")
-    psm.add_argument("--int-end", type=int, help="конец внутренних портов")
+    psm.add_argument("--in-port", help=f"внутренний порт: {INPORT_ARG}")
+    psm.add_argument("--in-port-end", type=int,
+                     help="конец диапазона внутренних портов")
     psm.add_argument("--from", dest="remote_host",
                      help="ограничить внешний IP")
     psm.add_argument("--enable", dest="enable", action="store_true",
@@ -905,6 +983,10 @@ def build_parser():
                    help="не ждать, пока роутер поднимется")
     p.add_argument("--timeout", type=int, default=180,
                    help="сколько секунд ждать восстановления [180]")
+    p = sub.add_parser("help",
+                       help="справка: f680 help [команда [подкоманда]]")
+    p.add_argument("topic", nargs="*", metavar="КОМАНДА",
+                   help="напр. `f680 help ports add`")
     return ap
 
 
@@ -946,10 +1028,38 @@ def _handle_error(e):
 # Main
 # ---------------------------------------------------------------------------
 
+def _subparser_map(p):
+    """dict имя -> parser для вложенных subparser'ов."""
+    for a in getattr(p, "_actions", []):
+        if type(a).__name__ == "_SubParsersAction":
+            return a.choices
+    return None
+
+
+def _cmd_help(parser, args):
+    """`f680 help`, `f680 help ports`, `f680 help ports add`."""
+    topic = args.topic or []
+    p = parser
+    for t in topic:
+        sp = _subparser_map(p)
+        if not sp or t not in sp:
+            ui.fail(f"неизвестная команда '{t}'",
+                    "список команд: f680 help (без аргументов)")
+            return 1
+        p = sp[t]
+    p.print_help()
+    return 0
+
+
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     try:
+        if args.cmd == "help":
+            return _cmd_help(parser, args)
+        if args.cmd in ("ports", "dhcp"):
+            _apply_port_ranges(args)
         if args.cmd == "pages":
             for k, v in PAGES.items():
                 print(f"{k:12s} {v}")
