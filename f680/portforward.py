@@ -232,10 +232,17 @@ class PortForward:
 
     def close_port(self, ref):
         """Disable a rule (Enable=0), it stays in the list."""
+        return self._set_enabled(ref, 0)
+
+    def enable_port(self, ref):
+        """Enable a rule (Enable=1), it stays in the list."""
+        return self._set_enabled(ref, 1)
+
+    def _set_enabled(self, ref, enabled):
         r = self._find(ref)
         fields = {k: unescape_stable(str(v)) for k, v in r["raw"].items()}
         fields.pop("_instid", None)
-        fields.update({"Enable": 0})
+        fields.update({"Enable": enabled})
         self._post("Apply", instid=r["id"], fields=fields)
         return r
 

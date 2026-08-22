@@ -23,7 +23,7 @@
     дождаться, пока роутер снова примет HTTP
   * `unescape_stable()` — раскрывает двойное HTML-экранирование значений
 * **`f680.portforward.PortForward`** — управление **port forwarding**:
-  * `rules` / `open_port` / `close_port` / `remove_port` / `set_alias`
+  * `rules` / `open_port` / `close_port` / `enable_port` / `remove_port` / `set_alias`
   * диапазоны портов, протоколы tcp/udp/both, ограничение внешнего IP
   * под капотом: one-time `_sessionTmpToken` из menuView +
     `Check: base64(RSA-PKCS1v15(SHA256(body)))`
@@ -35,9 +35,12 @@
   * ограничение: имя привязки ≤ **10 символов**
 * **CLI** (отдельно от Python API) — **единый `f680`**
   * `f680` / `python -m f680` — все команды роутера в одном:
-    `status`, `devices` (`--json`), `report` (`all`), `pf list|open|close|remove|rename`,
-    `dhcp list|leases|set|remove|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
-    `login`, `logout`, `reboot`, `reset --yes`
+    `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|rename`,
+    `dhcp list|leases|add|remove|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
+    `login`, `logout`, `reboot`, `reset`
+  * деструктивные действия (`reboot`, `reset`, `ports remove`, `dhcp remove`)
+    просят подтверждение в терминале: нажать `y` (без Enter); `-y / --yes` —
+    пропустить (для скриптов). В Python API подтверждений нет.
 * **`f680.macvendor`** — оффлайн-определение вендора устройства:
   * OUI-таблица по первым 3 байтам MAC + эвристики по hostname
   * `mac_vendor(mac)`, `hostname_hint(hostname)`, `guess_device(mac, host)`
@@ -111,7 +114,7 @@ CLI-флаги `--base` / `--user` / `--pass` переопределяют вс�
 f680 status          # состояние роутера (wifi/firewall/usb/voip)
 f680 devices         # все клиенты + вендоры (wired и wifi)
 f680 devices --json  # то же самое в JSON
-f680 report          # полный отчёт: status + devices + pf + dhcp
+f680 report          # полный отчёт: status + devices + ports + dhcp
 f680 report --json
 
 # подключение/разыскание
@@ -125,36 +128,40 @@ f680 raw "?_type=menuData&_tag=wan_homepage_lua.lua"   # сырой запрос
 # статические DHCP-привязки (MAC -> IP)
 f680 dhcp list                       # все привязки
 f680 dhcp leases                     # кто реально получил IP (DHCP-аренды)
-f680 dhcp set 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
+f680 dhcp add 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
 f680 dhcp rename 192.168.1.6 Mac     # имя <= 10 символов!
-f680 dhcp remove 192.168.1.6
+f680 dhcp remove 192.168.1.6         # спросит y/n
 ```
 
 ```bash
-# правила проброса портов
-f680 pf list
-f680 pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
-f680 pf open 22 192.168.1.2 22 --proto tcp
-f680 pf close 3000
-f680 pf remove "PC | Open WebUI"
-f680 pf rename 3000 "New Name"
+# правила проброса портов (NAT)
+f680 ports list
+f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
+f680 ports add 22 192.168.1.2 22 --proto tcp
+f680 ports disable 3000              # отключить (правило остаётся)
+f680 ports enable 3000               # включить обратно
+f680 ports remove "PC | Open WebUI"  # спросит y/n
+f680 ports remove "PC | Open WebUI" -y
+f680 ports rename 3000 "New Name"
 ```
 
 ```bash
-# перезагрузить роутер и дождаться, пока он поднимется
+# перезагрузить роутер и дождаться, пока он поднимется (спросит y/n)
 f680 reboot
+f680 reboot -y
 
 # сброс настроек к заводским (всё сотрётся!)
-f680 reset --yes
+f680 reset -y
 ```
 
 Все команды используют context manager — логин и **автоматический
 logout** (даже при ошибке), на роутере не висит мёртвая сессия.
 
 `-j/--json` поддерживается там, где есть данные для выгрузки: `status`,
-`devices`, `report`, `page`, `pf list`, `pf open`, `dhcp list`,
-`dhcp leases`, `dhcp set`. Ошибки — в stderr, exit code: 0 = OK,
-1 = ошибка, 2 = не удалось залогиниться.
+`devices`, `report`, `page`, `ports list`, `ports add`, `dhcp list`,
+`dhcp leases`, `dhcp add`. Ошибки — в stderr, exit code: 0 = OK,
+1 = ошибка, 2 = не удалось залогиниться, 3 = действие отменено
+(не подтверждено).
 
 ### Использование как библиотеки
 
@@ -186,6 +193,7 @@ with PortForward() as pf:
         print(r["alias"], r["ext_port"], r["int_ip"])
     pf.open_port(8080, "192.168.1.2", 8080, proto="both", alias="web")
     pf.close_port("web")
+    pf.enable_port("web")
     pf.remove_port(8080)
 ```
 

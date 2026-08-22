@@ -80,7 +80,7 @@ with Dhcp() as d:
     d.active_hosts()
 ```
 
-CLI: `f680 dhcp list|leases|set|remove|rename` (см. README).
+CLI: `f680 dhcp list|leases|add|remove|rename` (см. README).
 
 ## 5. Тесты
 

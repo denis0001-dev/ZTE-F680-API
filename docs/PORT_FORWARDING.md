@@ -124,7 +124,7 @@ def unescape_stable(s):
     return s
 ```
 
-Именно так `PortForward.close_port` / `set_alias` работают: читают
+Именно так `PortForward.close_port` / `enable_port` / `set_alias` работают: читают
 правило, делают `unescape_stable` для всех полей, меняют одно,
 пересылают.
 
@@ -137,13 +137,14 @@ with PortForward() as pf:          # авто-login/logout
     pf.rules()                     # → [dict, ...] со всеми правилами
     pf.open_port(8080, "192.168.1.2", 8080, proto="both", alias="web")
     pf.close_port("web")           # Enable=0, правило остаётся
+    pf.enable_port("web")          # Enable=1, правило снова активно
     pf.remove_port(8080)           # Delete
     pf.set_alias("web", "new name")
 ```
 
 * `open_port` **заменяет** правило, уже занимающее этот внешний порт
   (Apply на существующий id вместо создания нового).
-* `close_port` / `remove_port` ищут правило по внешнему порту (число,
+* `close_port` / `enable_port` / `remove_port` ищут правило по внешнему порту (число,
   включая попадание в диапазон) или по alias (регистр не важен, точное
   совпадение).
 * Диапазоны портов: `ext_port_end` / `int_port_end`.
@@ -152,15 +153,16 @@ with PortForward() as pf:          # авто-login/logout
 ## 4. CLI
 
 ```bash
-f680 pf list
-f680 pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
-f680 pf open 22 192.168.1.2 22 --proto tcp
-f680 pf open 50000 192.168.1.5 5000 --ext-end 60000 --int-end 15000 --proto udp
-f680 pf close 3000
-f680 pf remove "PC | Open WebUI"
+f680 ports list
+f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
+f680 ports add 22 192.168.1.2 22 --proto tcp
+f680 ports add 50000 192.168.1.5 5000 --ext-end 60000 --int-end 15000 --proto udp
+f680 ports disable 3000
+f680 ports enable 3000
+f680 ports remove "PC | Open WebUI"    # спросит y/n; -y — пропустить
 ```
 
-Формат `open`: `open <ext-port> <ip> <int-port> [название]`, опции:
+Формат `add`: `add <ext-port> <ip> <int-port> [название]`, опции:
 `--proto tcp|udp|both`, `--ext-end N`, `--int-end N`, `--from IP`.
 
 ## 5. Ошибки
