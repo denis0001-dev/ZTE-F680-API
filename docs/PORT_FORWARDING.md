@@ -160,8 +160,6 @@ f680 pf close 3000
 f680 pf remove "PC | Open WebUI"
 ```
 
-(Старый `f680-pf <cmd>` — deprecated-обёртка, транслируется в `f680 pf <cmd>`.)
-
 Формат `open`: `open <ext-port> <ip> <int-port> [название]`, опции:
 `--proto tcp|udp|both`, `--ext-end N`, `--int-end N`, `--from IP`.
 

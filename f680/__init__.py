@@ -9,9 +9,6 @@
 Команды: status, devices, report, pf (list/open/close/remove/rename),
 dhcp (list/leases/set/remove/rename), page, raw, pages, reboot, reset,
 login, logout. Подробности: `f680 --help`.
-
-Старые обёртки f680-api / f680-pf / f680-dhcp / f680-net работают,
-но deprecated.
 """
 
 from .client import F680, PAGES

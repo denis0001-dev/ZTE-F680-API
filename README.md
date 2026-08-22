@@ -38,9 +38,6 @@
     `status`, `devices` (`--json`), `report` (`all`), `pf list|open|close|remove|rename`,
     `dhcp list|leases|set|remove|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
     `login`, `logout`, `reboot`, `reset --yes`
-  * старые обёртки `f680-api` / `f680-pf` / `f680-dhcp` / `f680-net`
-    **deprecated** — работают как есть, но транслируют команды в новый
-    `f680` и печатают в stderr подсказку
 * **`f680.macvendor`** — оффлайн-определение вендора устройства:
   * OUI-таблица по первым 3 байтам MAC + эвристики по hostname
   * `mac_vendor(mac)`, `hostname_hint(hostname)`, `guess_device(mac, host)`
@@ -56,13 +53,8 @@ f680-router/
 │   ├── portforward.py           #   port forwarding (token + RSA Check, модель правил)
 │   ├── dhcp.py                  #   DHCP-привязки (token + RSA Check, ретраи, модель правил)
 │   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
-│   └── cli/                     #   командные интерфейсы (argparse)
-│       ├── main.py              #   ЕДИНЫЙ f680: python -m f680
-│       ├── compat.py            #   deprecated-маппинг старых команд
-│       ├── api.py               #   f680-api  (deprecated → f680)
-│       ├── pf.py                #   f680-pf   (deprecated → f680 pf)
-│       ├── dhcp.py              #   f680-dhcp (deprecated → f680 dhcp)
-│       └── net.py               #   f680-net  (deprecated → f680 ...)
+│   └── cli/                     #   командный интерфейс (argparse)
+│       └── main.py              #   f680: python -m f680
 ├── tests/
 │   ├── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 │   └── test_dhcp_integration.py # сквозной тест: add bind → verify → delete

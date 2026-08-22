@@ -17,11 +17,7 @@ dependencies = [
 dotenv = ["python-dotenv>=1.0"]
 
 [project.scripts]
-f680 = "f680.cli.main:main"                  # единый CLI (новый)
-f680-api = "f680.cli.compat:main_api"        # deprecated-обёртки
-f680-pf = "f680.cli.compat:main_pf"
-f680-dhcp = "f680.cli.compat:main_dhcp"
-f680-net = "f680.cli.compat:main_net"
+f680 = "f680.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["f680*"]
