@@ -13,8 +13,12 @@
   * 3-шаговый login (SHA256 password + one-time token), logout, cookie-сессия
   * context manager: `with F680() as c:` — авто-login / авто-logout
   * чтение любых data-страниц (wlan, voip, firewall, usb, accessdev, …) с
-    парсингом XML в словари
-  * таблица подключённых клиентов (IP / MAC / hostname)
+    парсингом XML в словари (instances + top-level ParaName/ParaValue)
+  * таблица подключённых клиентов: `connected_devices()` — **wired + Wi-Fi
+    вместе** (дедуп по MAC, метка `source`), `wifi_clients()`, `lan_clients()`
+  * `status()` — сводный снимок состояния: Wi-Fi radio, firewall, USB FTP,
+    VoIP + список клиентов и ошибок страниц
+  * `unescape_stable()` — раскрывает двойное HTML-экранирование значений
 * **`f680.portforward.PortForward`** — управление **port forwarding**:
   * `rules` / `open_port` / `close_port` / `remove_port` / `set_alias`
   * диапазоны портов, протоколы tcp/udp/both, ограничение внешнего IP
@@ -25,6 +29,12 @@
     `page <tag>`, `raw "<qs>"`, `pages`
   * `f680-pf` / `python -m f680.cli.pf` — `list`, `open`, `close`, `remove`,
     `logout`
+  * `f680-net` / `python -m f680.cli.net` — **обзор домашней сети одной
+    командой**: `status` (роутер), `devices` (клиенты + вендоры по MAC,
+    `--json`), `pf` (проброс портов), `all` (полный отчёт)
+* **`f680.macvendor`** — оффлайн-определение вендора устройства:
+  * OUI-таблица по первым 3 байтам MAC + эвристики по hostname
+  * `mac_vendor(mac)`, `hostname_hint(hostname)`, `guess_device(mac, host)`
 
 ## Структура репозитория
 
@@ -35,9 +45,11 @@ f680-router/
 │   ├── config.py                #   конфигурация: .env + env (F680_BASE/USERNAME/PASSWORD)
 │   ├── client.py                #   базовый клиент API (login, страницы, парсинг XML)
 │   ├── portforward.py           #   port forwarding (token + RSA Check, модель правил)
+│   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
 │   └── cli/                     #   командные интерфейсы (argparse)
 │       ├── api.py               #   f680-api:  python -m f680.cli.api
-│       └── pf.py                #   f680-pf:   python -m f680.cli.pf
+│       ├── pf.py                #   f680-pf:   python -m f680.cli.pf
+│       └── net.py               #   f680-net:  python -m f680.cli.net
 ├── tests/
 │   └── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 ├── docs/
@@ -98,6 +110,15 @@ f680-api page firewall
 
 # сырой запрос
 f680-api raw "?_type=menuData&_tag=wan_homepage_lua.lua"
+```
+
+```bash
+# обзор домашней сети
+f680-net status       # состояние роутера (wifi/firewall/usb/voip)
+f680-net devices      # все клиенты + вендоры (wired и wifi)
+f680-net devices --json
+f680-net pf           # правила проброса портов
+f680-net all          # полный отчёт одним заходом
 ```
 
 ```bash

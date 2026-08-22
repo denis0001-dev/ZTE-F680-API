@@ -6,12 +6,16 @@
 CLI-команды (отдельные модули):
     python -m f680.cli.api   — базовый API (login, страницы, devices, raw)
     python -m f680.cli.pf    — port forwarding (list/open/close/remove)
+    python -m f680.cli.net   — обзор сети: status / devices / pf / all
 
-После `pip install -e .` доступны и консольные скрипты `f680-api` / `f680-pf`.
+После `pip install -e .` доступны и консольные скрипты
+`f680-api` / `f680-pf` / `f680-net`.
 """
 
 from .client import F680, PAGES
 from .portforward import PortForward
+from .macvendor import mac_vendor, hostname_hint, guess_device
 
-__all__ = ["F680", "PortForward", "PAGES"]
+__all__ = ["F680", "PortForward", "PAGES",
+           "mac_vendor", "hostname_hint", "guess_device"]
 __version__ = "1.0.0"
