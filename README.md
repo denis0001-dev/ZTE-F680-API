@@ -33,16 +33,14 @@
   * тот же протокол, что и port forwarding: one-time токен `lanMgrIpv4` +
     RSA-подпись; ретраи на коммит-лаг `IF_ERRORID=-257`
   * ограничение: имя привязки ≤ **10 символов**
-* **CLI** (отдельно от Python API):
-  * `f680-api` / `python -m f680.cli.api` — `login`, `logout`, `devices`,
-    `page <tag>`, `raw "<qs>"`, `pages`, `reboot`, `reset --yes`
-  * `f680-pf` / `python -m f680.cli.pf` — `list`, `open`, `close`, `remove`,
-    `logout`
-  * `f680-dhcp` / `python -m f680.cli.dhcp` — `list`, `leases`, `set`,
-    `remove`, `rename`
-  * `f680-net` / `python -m f680.cli.net` — **обзор домашней сети одной
-    командой**: `status` (роутер), `devices` (клиенты + вендоры по MAC,
-    `--json`), `pf` (проброс портов), `all` (полный отчёт)
+* **CLI** (отдельно от Python API) — **единый `f680`**
+  * `f680` / `python -m f680` — все команды роутера в одном:
+    `status`, `devices` (`--json`), `report` (`all`), `pf list|open|close|remove|rename`,
+    `dhcp list|leases|set|remove|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
+    `login`, `logout`, `reboot`, `reset --yes`
+  * старые обёртки `f680-api` / `f680-pf` / `f680-dhcp` / `f680-net`
+    **deprecated** — работают как есть, но транслируют команды в новый
+    `f680` и печатают в stderr подсказку
 * **`f680.macvendor`** — оффлайн-определение вендора устройства:
   * OUI-таблица по первым 3 байтам MAC + эвристики по hostname
   * `mac_vendor(mac)`, `hostname_hint(hostname)`, `guess_device(mac, host)`
@@ -59,10 +57,12 @@ f680-router/
 │   ├── dhcp.py                  #   DHCP-привязки (token + RSA Check, ретраи, модель правил)
 │   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
 │   └── cli/                     #   командные интерфейсы (argparse)
-│       ├── api.py               #   f680-api:  python -m f680.cli.api
-│       ├── pf.py                #   f680-pf:   python -m f680.cli.pf
-│       ├── dhcp.py              #   f680-dhcp: python -m f680.cli.dhcp
-│       └── net.py               #   f680-net:  python -m f680.cli.net
+│       ├── main.py              #   ЕДИНЫЙ f680: python -m f680
+│       ├── compat.py            #   deprecated-маппинг старых команд
+│       ├── api.py               #   f680-api  (deprecated → f680)
+│       ├── pf.py                #   f680-pf   (deprecated → f680 pf)
+│       ├── dhcp.py              #   f680-dhcp (deprecated → f680 dhcp)
+│       └── net.py               #   f680-net  (deprecated → f680 ...)
 ├── tests/
 │   ├── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 │   └── test_dhcp_integration.py # сквозной тест: add bind → verify → delete
@@ -83,10 +83,10 @@ Python API и CLI разделены: `f680/client.py` и `f680/portforward.py` 
 ## Установка
 
 ```bash
-# вариант 1: как пакет (даёт консольные скрипты f680-api / f680-pf)
+# вариант 1: как пакет (даёт консольный скрипт f680)
 pip install -e .
 
-# вариант 2: просто из каталога (python -m f680.cli.api ...)
+# вариант 2: просто из каталога (python -m f680 ...)
 pip install -r requirements.txt
 ```
 
@@ -112,56 +112,57 @@ CLI-флаги `--base` / `--user` / `--pass` переопределяют вс�
 
 ## Быстрый старт
 
-```bash
-# подключённые клиенты
-f680-api devices          # или: python -m f680.cli.api devices
-
-# список известных страниц
-f680-api pages
-
-# дамп любой data-страницы
-f680-api page wlan
-f680-api page firewall
-
-# сырой запрос
-f680-api raw "?_type=menuData&_tag=wan_homepage_lua.lua"
-```
-
-```bash
-# перезагрузить роутер и дождаться, пока он поднимется
-f680-api reboot
-
-# сброс настроек к заводским (всё сотрётся!)
-f680-api reset --yes
-```
+Один бинарь `f680` на всё. Синтаксис: `f680 [опции] <команда> [аргументы]`.
 
 ```bash
 # обзор домашней сети
-f680-net status       # состояние роутера (wifi/firewall/usb/voip)
-f680-net devices      # все клиенты + вендоры (wired и wifi)
-f680-net devices --json
-f680-net pf           # правила проброса портов
-f680-net all          # полный отчёт одним заходом
+f680 status          # состояние роутера (wifi/firewall/usb/voip)
+f680 devices         # все клиенты + вендоры (wired и wifi)
+f680 devices --json  # то же самое в JSON
+f680 report          # полный отчёт: status + devices + pf + dhcp
+f680 report --json
+
+# подключение/разыскание
+f680 login           # тест логина
+f680 pages           # список известных страниц
+f680 page wlan       # дамп любой data-страницы (есть --json)
+f680 raw "?_type=menuData&_tag=wan_homepage_lua.lua"   # сырой запрос
 ```
 
 ```bash
 # статические DHCP-привязки (MAC -> IP)
-f680-dhcp list                       # все привязки
-f680-dhcp leases                     # кто реально получил IP (DHCP-аренды)
-f680-dhcp set 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
-f680-dhcp rename 192.168.1.6 Mac     # имя <= 10 символов!
-f680-dhcp remove 192.168.1.6
-
-# правила проброса портов
-f680-pf list
-f680-pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
-f680-pf open 22 192.168.1.2 22 --proto tcp
-f680-pf close 3000
-f680-pf remove "PC | Open WebUI"
+f680 dhcp list                       # все привязки
+f680 dhcp leases                     # кто реально получил IP (DHCP-аренды)
+f680 dhcp set 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
+f680 dhcp rename 192.168.1.6 Mac     # имя <= 10 символов!
+f680 dhcp remove 192.168.1.6
 ```
 
-Все команды CLI используют context manager — логин и **автоматический
+```bash
+# правила проброса портов
+f680 pf list
+f680 pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
+f680 pf open 22 192.168.1.2 22 --proto tcp
+f680 pf close 3000
+f680 pf remove "PC | Open WebUI"
+f680 pf rename 3000 "New Name"
+```
+
+```bash
+# перезагрузить роутер и дождаться, пока он поднимется
+f680 reboot
+
+# сброс настроек к заводским (всё сотрётся!)
+f680 reset --yes
+```
+
+Все команды используют context manager — логин и **автоматический
 logout** (даже при ошибке), на роутере не висит мёртвая сессия.
+
+`-j/--json` поддерживается там, где есть данные для выгрузки: `status`,
+`devices`, `report`, `page`, `pf list`, `pf open`, `dhcp list`,
+`dhcp leases`, `dhcp set`. Ошибки — в stderr, exit code: 0 = OK,
+1 = ошибка, 2 = не удалось залогиниться.
 
 ### Использование как библиотеки
 

@@ -152,14 +152,15 @@ with PortForward() as pf:          # авто-login/logout
 ## 4. CLI
 
 ```bash
-f680-pf list
-f680-pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
-f680-pf open 22 192.168.1.2 22 --proto tcp
-f680-pf open 50000 192.168.1.5 5000 --ext-end 60000 --int-end 15000 --proto udp
-f680-pf close 3000
-f680-pf remove "PC | Open WebUI"
-f680-pf logout
+f680 pf list
+f680 pf open 3000 192.168.1.3 3000 "PC | Open WebUI"
+f680 pf open 22 192.168.1.2 22 --proto tcp
+f680 pf open 50000 192.168.1.5 5000 --ext-end 60000 --int-end 15000 --proto udp
+f680 pf close 3000
+f680 pf remove "PC | Open WebUI"
 ```
+
+(Старый `f680-pf <cmd>` — deprecated-обёртка, транслируется в `f680 pf <cmd>`.)
 
 Формат `open`: `open <ext-port> <ip> <int-port> [название]`, опции:
 `--proto tcp|udp|both`, `--ext-end N`, `--int-end N`, `--from IP`.

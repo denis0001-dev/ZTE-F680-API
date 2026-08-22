@@ -1,6 +1,12 @@
-"""f680.cli — командные интерфейсы (argparse).
+"""f680.cli — командный интерфейс (argparse).
 
-Модули:
-    f680.cli.api  — базовый API:  python -m f680.cli.api
-    f680.cli.pf   — port forward: python -m f680.cli.pf
+Единый CLI (главный модуль):
+    f680.cli.main  — `f680 <команда>` / `python -m f680 <команда>`
+
+Deprecated-обёртки (транслируют старый синтаксис в новый):
+    f680.cli.api   — `f680-api ...`  → `f680 ...`
+    f680.cli.pf    — `f680-pf ...`   → `f680 pf ...`
+    f680.cli.dhcp  — `f680-dhcp ...` → `f680 dhcp ...`
+    f680.cli.net   — `f680-net ...`  → `f680 ...`
+    f680.cli.compat — маппинг и общий вход для обёрток
 """

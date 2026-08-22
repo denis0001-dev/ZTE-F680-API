@@ -1,15 +1,17 @@
 """f680 — Python-клиент веб-API роутера ZTE F680 (DST/MGTS).
 
 Публичный API:
-    from f680 import F680, PortForward
+    from f680 import F680, PortForward, Dhcp
 
-CLI-команды (отдельные модули):
-    python -m f680.cli.api   — базовый API (login, страницы, devices, raw)
-    python -m f680.cli.pf    — port forwarding (list/open/close/remove)
-    python -m f680.cli.net   — обзор сети: status / devices / pf / all
+Единый CLI (с версии 1.1):
+    f680 <команда> ...          # или: python -m f680 <команда> ...
 
-После `pip install -e .` доступны и консольные скрипты
-`f680-api` / `f680-pf` / `f680-net`.
+Команды: status, devices, report, pf (list/open/close/remove/rename),
+dhcp (list/leases/set/remove/rename), page, raw, pages, reboot, reset,
+login, logout. Подробности: `f680 --help`.
+
+Старые обёртки f680-api / f680-pf / f680-dhcp / f680-net работают,
+но deprecated.
 """
 
 from .client import F680, PAGES
@@ -19,4 +21,4 @@ from .macvendor import mac_vendor, hostname_hint, guess_device
 
 __all__ = ["F680", "PortForward", "Dhcp", "PAGES",
            "mac_vendor", "hostname_hint", "guess_device"]
-__version__ = "1.0.0"
+__version__ = "1.1.0"

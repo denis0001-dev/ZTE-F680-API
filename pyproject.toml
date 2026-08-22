@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "f680"
-version = "1.0.0"
+version = "1.1.0"
 description = "Python client for the ZTE F680 (DST/MGTS) admin web API"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -17,10 +17,11 @@ dependencies = [
 dotenv = ["python-dotenv>=1.0"]
 
 [project.scripts]
-f680-api = "f680.cli.api:main"
-f680-pf = "f680.cli.pf:main"
-f680-net = "f680.cli.net:main"
-f680-dhcp = "f680.cli.dhcp:main"
+f680 = "f680.cli.main:main"                  # единый CLI (новый)
+f680-api = "f680.cli.compat:main_api"        # deprecated-обёртки
+f680-pf = "f680.cli.compat:main_pf"
+f680-dhcp = "f680.cli.compat:main_dhcp"
+f680-net = "f680.cli.compat:main_net"
 
 [tool.setuptools.packages.find]
 include = ["f680*"]

@@ -192,13 +192,13 @@ body: IF_LogOff=1
 
 ```bash
 # сырой XML страницы
-f680-api raw "?_type=menuData&_tag=wan_homepage_lua.lua"
+f680 raw "?_type=menuData&_tag=wan_homepage_lua.lua"
 
 # hidden-данные
-f680-api raw "?_type=hiddenData&_tag=accessdev_data"
+f680 raw "?_type=hiddenData&_tag=accessdev_data"
 
 # HTML-страница меню (в ней — one-time _sessionTmpToken, см. PORT_FORWARDING.md)
-f680-api raw "?_type=menuView&_tag=portForwarding"
+f680 raw "?_type=menuView&_tag=portForwarding"
 ```
 
 `raw()` сам подставляет `_sessionTOKEN`, если он ещё не в query string.
