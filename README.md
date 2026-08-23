@@ -40,10 +40,16 @@
     `set_dos()` / `enable_dos()` / `disable_dos()` / `set_threshold()`
   * тот же протокол, что и port forwarding: one-time токен `firewall` +
     RSA-подпись; оба блока — одиночный инстанс `IGD`
+* **`f680.account.Account`** — **учётные записи** (смена пароля, таймаут сессии):
+  * `accounts()` / `timeout()` — чтение, `change_password(username, old, new)`,
+    `set_timeout(минуты)`
+  * тот же протокол: one-time токен `accountMgr` + RSA-подпись; ⚠️ после
+    первого логина с новым паролем старая сессия выдавливается
 * **CLI** (отдельно от Python API) — **единый `f680`**
   * `f680` / `python -m f680` — все команды роутера в одном:
     `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|modify|rename`,
     `dhcp list|leases|add|remove|modify|rename`, `firewall list|enable|disable|level|dos`,
+    `account list|password|timeout|set-timeout`,
     `page <tag>`, `raw "<qs>"`, `pages`,
     `login`, `logout`, `reboot`, `reset`, `help [команда [подкоманда]]`
   * `ports add` — позиции `ПОРТ IP ВНУТР_ПОРТ [ИМЯ]` или эквивалентные флаги
@@ -80,6 +86,7 @@ f680-router/
 │   ├── portforward.py           #   port forwarding (token + RSA Check, модель правил)
 │   ├── dhcp.py                  #   DHCP-привязки (token + RSA Check, ретраи, модель правил)
 │   ├── firewall.py              #   межсетевой экран + anti-DoS (token + RSA Check)
+│   ├── account.py               #   учётные записи: смена пароля, таймаут (token + RSA Check)
 │   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
 │   └── cli/                     #   командный интерфейс (argparse)
 │       ├── main.py              #     f680: python -m f680
@@ -87,12 +94,14 @@ f680-router/
 ├── tests/
 │   ├── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 │   ├── test_dhcp_integration.py # сквозной тест: add bind → verify → delete
-│   └── test_firewall_integration.py # сквозной тест: level/enable/dos → verify → restore
+│   ├── test_firewall_integration.py # сквозной тест: level/enable/dos → verify → restore
+│   └── test_account_integration.py  # сквозной тест: accounts/timeout → смена пароля → verify → restore
 ├── docs/
 │   ├── API.md                   # документация по API роутера (auth, endpoints, XML)
 │   ├── PORT_FORWARDING.md       # протокол port forwarding (токены, RSA, модель правил)
 │   ├── DHCP.md                  # протокол DHCP-привязок (токен, _InstNum, коммит-лаг)
-│   └── FIREWALL.md              # протокол межсетевого экрана + anti-DoS
+│   ├── FIREWALL.md              # протокол межсетевого экрана + anti-DoS
+│   └── ACCOUNT.md               # протокол учётных записей (смена пароля, таймаут)
 ├── .env.example                 # шаблон настроек (скопировать в .env)
 ├── pyproject.toml               # установка пакета + консольные скрипты
 ├── requirements.txt
@@ -172,6 +181,9 @@ f680 firewall enable                  # включить (уровень сох�
 f680 firewall dos list                # состояние anti-DoS
 f680 firewall dos set 200             # порог (1..999, по умолчанию 100)
 f680 firewall dos disable
+f680 account list                    # учётные записи + таймаут сессии
+f680 account password mgts           # смена пароля (3 промпта getpass)
+f680 account set-timeout 10          # время простоя сессии (1..30 мин)
 ```
 
 ```bash
@@ -312,10 +324,16 @@ usb, accessdev, port forwarding) работают. Подробности — в
 экрана: чтение → смена уровня → вкл/выкл FW и anti-DoS → проверка →
 восстановление исходного состояния.
 
+`tests/test_account_integration.py` — сквозной тест учётных записей:
+список → таймаут (смена/откат) → смена пароля `mgts` → логин с новым
+паролем (новая сессия, т.к. старую выдавливает) → откат пароля →
+логин с исходным.
+
 ```bash
 python3 tests/test_pf_integration.py -v
 python3 tests/test_dhcp_integration.py
 python3 tests/test_firewall_integration.py
+python3 tests/test_account_integration.py
 ```
 
 ## Документация
@@ -329,6 +347,10 @@ python3 tests/test_firewall_integration.py
   эндпоинты, правило `_InstNum`, коммит-лаг `-257`, лимит имени в 10 символов
 * **[docs/FIREWALL.md](docs/FIREWALL.md)** — протокол межсетевого экрана
   и anti-DoS: эндпоинты, инстанс `IGD`, поведение `firewall_homepage`
+* **[docs/ACCOUNT.md](docs/ACCOUNT.md)** — протокол учётных записей:
+  смена пароля (`_InstID=IGD.AU1/AU2`), таймаут сессии, выдавливание
+  старой сессии после логина с новым паролем, `lockingTime` при
+  неудачных попытках
 
 ## Известные особенности
 

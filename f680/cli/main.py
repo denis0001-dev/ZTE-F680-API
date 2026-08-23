@@ -14,6 +14,7 @@ f680 — единый CLI для роутера ZTE F680 (DST/MGTS).
     ports  list|add|enable|disable|remove|modify|rename   проброс портов (NAT)
     dhcp   list|leases|add|remove|modify|rename           статические DHCP-привязки (MAC -> IP)
     firewall list|enable|disable|level|dos               межсетевой экран (уровень + anti-DoS)
+    account list|password|timeout|set-timeout           учётные записи (смена пароля, таймаут)
     help <команда> [подкоманда]                          справка (f680 help ports add)
     page <tag>                 дамп data-страницы
     raw <qs>                   сырой запрос
@@ -63,6 +64,9 @@ ports modify, dhcp modify) просят подтверждение в терми
     f680 firewall level high
     f680 firewall dos set 200
     f680 firewall disable
+    f680 account list
+    f680 account password mgts
+    f680 account set-timeout 10
     f680 reboot -y
     f680 reset -y
 
@@ -91,6 +95,7 @@ from f680.client import F680, F680Error, LoginFailed, RouterError, PAGES
 from f680.portforward import PortForward, PROTOS
 from f680.dhcp import Dhcp
 from f680.firewall import Firewall
+from f680.account import Account
 from f680.macvendor import guess_device
 from f680.config import BASE, USERNAME, PASSWORD
 from f680.cli import ui
@@ -768,6 +773,48 @@ def _cmd_firewall(fw, args):
     return 0
 
 
+def _cmd_account(acct, args):
+    import getpass
+
+    sub = args.action
+    if sub == "list":
+        out = {"accounts": acct.accounts(), "timeout": acct.timeout()}
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        else:
+            for a in out["accounts"]:
+                role = (ui.bold(a["right"]) if a["right"] == "admin"
+                        else a["right"])
+                print(f"  {ui.bold(a['username']):<16} {ui.dim('роль:')} "
+                      f"{role}  {ui.dim('id:')} {a['inst_id']}")
+            print(f"\nВремя простоя сессии: "
+                  f"{ui.bold(str(out['timeout']['timeout']))} мин")
+    elif sub == "password":
+        username = args.username
+        old = getpass.getpass("Старый пароль: ")
+        new = getpass.getpass("Новый пароль: ")
+        again = getpass.getpass("Новый пароль ещё раз: ")
+        if new != again:
+            print(ui.red("✗ ") + "пароли не совпадают",
+                  file=sys.stderr)
+            return EXIT_NOT_CONFIRMED
+        if len(new) < 8 or not all(ord(ch) < 128 for ch in new):
+            print(ui.red("✗ ") + "новый пароль: минимум 8 символов, "
+                  "только ASCII",
+                  file=sys.stderr)
+            return EXIT_NOT_CONFIRMED
+        acct.change_password(username, old, new)
+        print(ui.green("✓ ") + f"пароль '{username}' изменён")
+    elif sub == "timeout":
+        print(f"Время простоя сессии: "
+              f"{ui.bold(str(acct.timeout()['timeout']))} мин")
+    elif sub == "set-timeout":
+        after = acct.set_timeout(args.minutes)
+        print(ui.green("✓ ") + f"время простоя сессии: "
+              f"{ui.bold(str(after['timeout']))} мин")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Парсер
 # ---------------------------------------------------------------------------
@@ -1075,6 +1122,23 @@ def build_parser():
     fdset.add_argument("threshold", type=int,
                        help="порог (1..999, по умолчанию 100)")
 
+    # -- учётные записи --------------------------------------------------
+    p = sub.add_parser("account",
+                       help="учётные записи (смена пароля, таймаут сессии)")
+    acs = p.add_subparsers(dest="action", required=True, metavar="ДЕЙСТВИЕ")
+
+    acl = acs.add_parser("list", help="все учётные записи + таймаут")
+    acl.add_argument("-j", "--json", action="store_true", help="вывод в JSON")
+
+    acp = acs.add_parser("password", help="сменить пароль учётной записи")
+    acp.add_argument("username", nargs="?", default=USERNAME,
+                     help=f"имя учётной записи [default: {USERNAME}]")
+
+    act = acs.add_parser("timeout", help="показать время простоя сессии")
+
+    acs2 = acs.add_parser("set-timeout", help="изменить время простоя (1..30)")
+    acs2.add_argument("minutes", type=int, help="минут (1..30)")
+
     # -- базовый API ----------------------------------------------------------
     p = sub.add_parser("page", help="дамп data-страницы (key/values)")
     p.add_argument("tag", help="страница или alias (wlan, wan, firewall, ...)")
@@ -1205,6 +1269,11 @@ def main(argv=None):
                           password=args.password,
                           verbose=args.verbose) as fw:
                 return _cmd_firewall(fw, args) or 0
+        elif args.cmd == "account":
+            with Account(base=args.base, username=args.user,
+                         password=args.password,
+                         verbose=args.verbose) as acct:
+                return _cmd_account(acct, args) or 0
         else:
             with F680(base=args.base, username=args.user,
                       password=args.password,
