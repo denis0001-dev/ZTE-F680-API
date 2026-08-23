@@ -159,20 +159,22 @@ with PortForward() as pf:          # авто-login/logout
 
 ```bash
 f680 ports list
-f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"
-f680 ports add --port 22 --ip 192.168.1.2 --in-port 22 --proto tcp
-f680 ports add --port 50000-60000 --ip 192.168.1.5 --in-port 5000-15000 --proto udp
+f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"   # позиции: ПОРТ IP ВНУТР. ПОРТ [ИМЯ]
+f680 ports add 22 192.168.1.2 22 --proto tcp
+f680 ports add 50000-60000 192.168.1.5 5000-15000 --proto udp
+f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"  # то же флагами
 f680 ports disable 3000
 f680 ports enable 3000
 f680 ports remove "PC | Open WebUI"    # спросит y/n; -y — пропустить
 f680 help ports add                    # подробная справка по параметрам
 ```
 
-Формат `add` — только флаги: `--port N` `--ip IP` `--in-port N` +
-`--name TEXT`, `--proto tcp|udp|both`, `--port-end N`, `--in-port-end N`,
-`--from IP`. `--port` / `--in-port` принимают одно значение или диапазон
-(`1000-2000`) — конец диапазона подставляется автоматически, если
-`--port-end` / `--in-port-end` не заданы явно. Все параметры подробно
+Формат `add` — позиции `ПОРТ IP ВНУТР_ПОРТ [ИМЯ]` либо эквивалентные флаги
+`--port N` `--ip IP` `--in-port N` `--name TEXT` (смешивать позиции и флаги
+нельзя). Доп. флаги в обоих синтаксисах: `--proto tcp|udp|both`,
+`--port-end N`, `--in-port-end N`, `--from IP`. Порт принимает одно значение
+или диапазон (`1000-2000`) — конец диапазона подставляется автоматически,
+если `--port-end` / `--in-port-end` не заданы явно. Все параметры подробно
 описаны в `f680 help ports add`. Ссылки REF (в `disable` / `enable` /
 `remove` / `modify` / `rename`): № из списка, внешний порт, id или название.
 

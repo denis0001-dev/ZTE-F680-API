@@ -47,7 +47,8 @@ ports modify, dhcp modify) просят подтверждение в терми
 Примеры:
     f680 devices
     f680 ports list
-    f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"
+    f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
+    f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"  # то же флагами
     f680 ports modify 1 --proto tcp --name "PC | SSH2"
     f680 ports modify 2222 --in-port 2223
     f680 ports disable 2
@@ -132,33 +133,35 @@ def _fmt_range(a, b):
     return str(a) if b == a else f"{a}-{b}"
 
 
+def _state(r):
+    """«включено»/«выключено» с цветом (зелёный/красный)."""
+    return ui.green("включено") if r["enabled"] else ui.red("выключено")
+
+
 def _describe_port(r):
     ext = _fmt_range(r["ext_port"], r["ext_port_end"] or r["ext_port"])
     inp = _fmt_range(r["int_port"], r["int_port_end"] or r["int_port"])
-    state = "" if r["enabled"] else " [выкл]"
     return (f"{ext:<10} {r['protocol'].lower():<6} '{r['alias']}' -> "
-            f"{r['int_ip']}:{inp}{state}  {ui.dim(r['id'])}")
+            f"{r['int_ip']}:{inp} {_state(r)}  {ui.dim(r['id'])}")
 
 
 def print_rules(rules, numbered=False):
     if numbered:
-        print(f"{'№':<4} " + f"{'ПОРТ':<12} {'ПРОТО':<6} {'НАЗВАНИЕ':<22} {'-> IP:ПОРТ':<22} СОСТОЯНИЕ")
+        print(f"{'№':<4} " + f"{'ПОРТ':<12} {'ПРОТО':<6} {'НАЗВАНИЕ':<22} {'-> IP:ПОРТ':<25} СОСТОЯНИЕ")
         for i, r in enumerate(rules, 1):
             ext = _fmt_range(r["ext_port"], r["ext_port_end"] or r["ext_port"])
             inp = _fmt_range(r["int_port"], r["int_port_end"] or r["int_port"])
-            state = "" if r["enabled"] else " [выкл]"
             line = (f"{i:<4} {ext:<12} {r['protocol'].lower():<6} "
-                    f"{r['alias']:<22} {r['int_ip']}:{inp:<13}{state}")
-            print(ui.dim(line) if not r["enabled"] else line)
+                    f"{r['alias']:<22} {r['int_ip']}:{inp:<13}{_state(r)}")
+            print(line)
     else:
-        print(ui.bold(f"{'ПОРТ':<12} {'ПРОТО':<6} {'НАЗВАНИЕ':<22} {'-> IP:ПОРТ':<22} СОСТОЯНИЕ"))
+        print(ui.bold(f"{'ПОРТ':<12} {'ПРОТО':<6} {'НАЗВАНИЕ':<22} {'-> IP:ПОРТ':<25} СОСТОЯНИЕ"))
         for r in rules:
             ext = _fmt_range(r["ext_port"], r["ext_port_end"] or r["ext_port"])
             inp = _fmt_range(r["int_port"], r["int_port_end"] or r["int_port"])
-            state = "" if r["enabled"] else " [выкл]"
             line = (f"{ext:<12} {r['protocol'].lower():<6} {r['alias']:<22} "
-                    f"{r['int_ip']}:{inp:<13}{state}")
-            print(ui.dim(line) if not r["enabled"] else line)
+                    f"{r['int_ip']}:{inp:<13}{_state(r)}")
+            print(line)
 
 
 def print_reservations(rules, numbered=False):
@@ -242,10 +245,9 @@ def _print_ports_section(rules):
     for r in rules:
         ext = _fmt_range(r["ext_port"], r["ext_port_end"] or r["ext_port"])
         inp = _fmt_range(r["int_port"], r["int_port_end"] or r["int_port"])
-        state = "" if r["enabled"] else " [выкл]"
         line = (f"  {ext:<14} {r['protocol'].lower():<6} {r['alias']:<22} "
-                f"{r['int_ip']}:{inp}{state}")
-        print(ui.dim(line) if not r["enabled"] else line)
+                f"{r['int_ip']}:{inp} {_state(r)}")
+        print(line)
 
 
 def _print_dhcp_section(d):
@@ -495,10 +497,10 @@ def _cmd_ports(pf, args):
     elif sub == "add":
         if args.port is None or args.ip is None or args.in_port is None:
             ui.fail("не хватает обязательных аргументов",
-                    "формат: f680 ports add --port N --ip IP --in-port N "
-                    "[--name TEXT] [--proto tcp|udp|both] "
+                    "формат: f680 ports add PORT IP IN_PORT [NAME] [--proto tcp|udp|both] "
                     "[--port-end N] [--in-port-end N] [--from IP] "
-                    "(диапазоны: --port 1000-2000)")
+                    "(диапазоны: PORT 1000-2000; то же можно записать флагами: "
+                    "--port N --ip IP --in-port N)")
             return 1
         rid = pf.open_port(args.port, args.ip, args.in_port,
                            proto=args.proto, alias=args.name,
@@ -733,6 +735,30 @@ def parse_port_range(s):
     return a, b
 
 
+def _merge_positional_add(args):
+    """Позиционный синтаксис `ports add`:
+
+        f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"
+
+    Позиционные аргументы (внешний порт, IP, внутренний порт, название)
+    приравниваются к флагам --port / --ip / --in-port / --name.
+    Смешивать позиции и флаги нельзя.
+    """
+    pairs = (("pos_port", "port", "--port"),
+             ("pos_ip", "ip", "--ip"),
+             ("pos_in_port", "in_port", "--in-port"),
+             ("pos_name", "name", "--name"))
+    for pos_attr, flag_attr, flag_name in pairs:
+        pos = getattr(args, pos_attr, None)
+        flag = getattr(args, flag_attr, None)
+        if pos is not None and flag is not None:
+            raise ValueError(
+                f"позиционный аргумент и флаг {flag_name} заданы одновременно — "
+                f"используйте только один из синтаксисов")
+        if pos is not None:
+            setattr(args, flag_attr, pos)
+
+
 def _apply_port_ranges(args):
     """Распаковать '1000-2000' из --port/--in-port в *_end, если --port-end
     / --in-port-end не заданы явно. Работает для add и modify."""
@@ -755,8 +781,9 @@ EPILOG = """
   f680 devices --json
   f680 report                           # полный отчёт одним заходом
   f680 ports list                       # правила проброса портов
+  f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"   # позиции: ПОРТ IP ВНУТР. ПОРТ [ИМЯ]
   f680 ports add --port 3000 --ip 192.168.1.3 --in-port 3000 --name "PC | Open WebUI"
-  f680 ports add --port 1000-2000 --ip 192.168.1.3 --in-port 1000-2000
+  f680 ports add 1000-2000 192.168.1.3 1000-2000           # диапазоны
   f680 ports modify 1 --proto tcp      # № из списка
   f680 ports modify 2222 --in-port 2223
   f680 ports disable 2
@@ -780,15 +807,12 @@ EPILOG = """
 Перед изменением показывается правило, после — проверяется по
 стабильному id, что изменена именно та запись.
 
-опции для ports add:
-  --port N | N-M         внешний порт или диапазон (обязательно)
-  --port-end N           конец диапазона (если не встроен в --port)
-  --ip IP                IP устройства (обязательно)
-  --in-port N | N-M      внутренний порт или диапазон (обязательно)
-  --in-port-end N        конец внутреннего диапазона
-  --name TEXT            название правила
-  --proto tcp|udp|both   протокол (по умолчанию both)
-  --from IP              ограничить внешний IP (по умолчанию любой)
+ports add — позиции или флаги (смешивать нельзя):
+  f680 ports add ПОРТ IP ВНУТР_ПОРТ [ИМЯ]
+  f680 ports add --port N --ip IP --in-port N --name TEXT
+  ПОРТ / ВНУТР_ПОРТ: N или диапазон N-M (обязательно); --port-end / --in-port-end
+  — конец диапазона, если не встроен; --proto tcp|udp|both (default both);
+  --from IP — ограничить внешний IP (по умолчанию любой)
 
 опции для ports modify REF (задаётся только то, что меняется):
   --name TEXT --proto tcp|udp|both --port N | N-M --port-end N
@@ -853,17 +877,27 @@ def build_parser():
     psa = ps.add_parser(
         "add", help="создать/обновить и включить правило",
         description=("Создать (или заменить) и включить правило проброса.\n\n"
-                     "f680 ports add --port N --ip IP --in-port N "
-                     "[--name TEXT]\n"
+                     "f680 ports add PORT IP IN_PORT [NAME]\n"
                      "              [--proto tcp|udp|both] [--port-end N] "
                      "[--in-port-end N]\n"
                      "              [--from IP] [-y]\n\n"
-                     "--port / --in-port принимают одно значение (3000) или\n"
+                     "PORT / IN_PORT принимают одно значение (3000) или\n"
                      "диапазон (1000-2000) — конец диапазона из него "
                      "заполняется автоматически, если --port-end / --in-port-end "
-                     "не заданы явно."),
+                     "не заданы явно.\n\n"
+                     "То же самое флагами: f680 ports add --port 3000 "
+                     "--ip 192.168.1.3 --in-port 3000 --name 'ИМЯ'.\n"
+                     "Смешивать позиционные аргументы и флаги нельзя."),
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    psa.add_argument("--port", help=f"внешний порт: {PORT_ARG}")
+    psa.add_argument("pos_port", nargs="?", default=None, metavar="ПОРТ",
+                     help=f"внешний порт: {PORT_ARG}")
+    psa.add_argument("pos_ip", nargs="?", default=None, metavar="IP",
+                     help="IP устройства в локальной сети, напр. 192.168.1.2")
+    psa.add_argument("pos_in_port", nargs="?", default=None, metavar="ИН_ПОРТ",
+                     help=f"внутренний порт: {INPORT_ARG}")
+    psa.add_argument("pos_name", nargs="?", default=None, metavar="ИМЯ",
+                     help="название правила")
+    psa.add_argument("--port", help=f"внешний порт (флаговый вариант): {PORT_ARG}")
     psa.add_argument("--port-end", type=int,
                      help="конец диапазона внешних портов (если --port — один порт, равняется ему)")
     psa.add_argument("--ip", help="IP устройства в локальной сети, напр. 192.168.1.2")
@@ -1059,6 +1093,8 @@ def main(argv=None):
         if args.cmd == "help":
             return _cmd_help(parser, args)
         if args.cmd in ("ports", "dhcp"):
+            if args.cmd == "ports" and args.action == "add":
+                _merge_positional_add(args)
             _apply_port_ranges(args)
         if args.cmd == "pages":
             for k, v in PAGES.items():
