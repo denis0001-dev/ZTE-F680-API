@@ -35,10 +35,16 @@
   * тот же протокол, что и port forwarding: one-time токен `lanMgrIpv4` +
     RSA-подпись; ретраи на коммит-лаг `IF_ERRORID=-257`
   * ограничение: имя привязки ≤ **10 символов**
+* **`f680.firewall.Firewall`** — **межсетевой экран** (уровень + anti-DoS):
+  * `config()` / `dos()` — чтение, `set_level()` / `enable()` / `disable()`,
+    `set_dos()` / `enable_dos()` / `disable_dos()` / `set_threshold()`
+  * тот же протокол, что и port forwarding: one-time токен `firewall` +
+    RSA-подпись; оба блока — одиночный инстанс `IGD`
 * **CLI** (отдельно от Python API) — **единый `f680`**
   * `f680` / `python -m f680` — все команды роутера в одном:
     `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|modify|rename`,
-    `dhcp list|leases|add|remove|modify|rename`, `page <tag>`, `raw "<qs>"`, `pages`,
+    `dhcp list|leases|add|remove|modify|rename`, `firewall list|enable|disable|level|dos`,
+    `page <tag>`, `raw "<qs>"`, `pages`,
     `login`, `logout`, `reboot`, `reset`, `help [команда [подкоманда]]`
   * `ports add` — позиции `ПОРТ IP ВНУТР_ПОРТ [ИМЯ]` или эквивалентные флаги
     `--port N | N-M`, `--ip IP`, `--in-port N | N-M` (+ `--port-end`,
@@ -68,22 +74,25 @@
 ```
 f680-router/
 ├── f680/                        # пакет
-│   ├── __init__.py              #   публичный API: F680, PortForward
+│   ├── __init__.py              #   публичный API: F680, PortForward, Dhcp, Firewall
 │   ├── config.py                #   конфигурация: .env + env (F680_BASE/USERNAME/PASSWORD)
 │   ├── client.py                #   базовый клиент API (login, страницы, парсинг XML)
 │   ├── portforward.py           #   port forwarding (token + RSA Check, модель правил)
 │   ├── dhcp.py                  #   DHCP-привязки (token + RSA Check, ретраи, модель правил)
+│   ├── firewall.py              #   межсетевой экран + anti-DoS (token + RSA Check)
 │   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
 │   └── cli/                     #   командный интерфейс (argparse)
 │       ├── main.py              #     f680: python -m f680
 │       └── ui.py                #     цвета (TTY), pretty-ошибки, иконки
 ├── tests/
 │   ├── test_pf_integration.py   # сквозной тест: add rule → verify → delete
-│   └── test_dhcp_integration.py # сквозной тест: add bind → verify → delete
+│   ├── test_dhcp_integration.py # сквозной тест: add bind → verify → delete
+│   └── test_firewall_integration.py # сквозной тест: level/enable/dos → verify → restore
 ├── docs/
 │   ├── API.md                   # документация по API роутера (auth, endpoints, XML)
 │   ├── PORT_FORWARDING.md       # протокол port forwarding (токены, RSA, модель правил)
-│   └── DHCP.md                  # протокол DHCP-привязок (токен, _InstNum, коммит-лаг)
+│   ├── DHCP.md                  # протокол DHCP-привязок (токен, _InstNum, коммит-лаг)
+│   └── FIREWALL.md              # протокол межсетевого экрана + anti-DoS
 ├── .env.example                 # шаблон настроек (скопировать в .env)
 ├── pyproject.toml               # установка пакета + консольные скрипты
 ├── requirements.txt
@@ -155,6 +164,17 @@ f680 dhcp remove 1 -y                 # № или IP/MAC/id/имя; спрос�
 ```
 
 ```bash
+# межсетевой экран (уровень + anti-DoS)
+f680 firewall list                    # состояние FW и anti-DoS
+f680 firewall level middle            # low | middle | high
+f680 firewall disable                 # выключить межсетевой экран
+f680 firewall enable                  # включить (уровень сохраняется)
+f680 firewall dos list                # состояние anti-DoS
+f680 firewall dos set 200             # порог (1..999, по умолчанию 100)
+f680 firewall dos disable
+```
+
+```bash
 # правила проброса портов (NAT)
 f680 ports list
 f680 ports add 3000 192.168.1.3 3000 "PC | Open WebUI"    # позиции: ПОРТ IP ВНУТР. ПОРТ [ИМЯ]
@@ -185,7 +205,7 @@ logout** (даже при ошибке), на роутере не висит м�
 
 `-j/--json` поддерживается там, где есть данные для выгрузки: `status`,
 `devices`, `report`, `page`, `ports list`, `ports add`, `dhcp list`,
-`dhcp leases`, `dhcp add`. Ошибки — в stderr, exit code: 0 = OK,
+`dhcp leases`, `dhcp add`, `firewall list`. Ошибки — в stderr, exit code: 0 = OK,
 1 = ошибка, 2 = не удалось залогиниться, 3 = действие отменено
 (не подтверждено), 130 = прервано (Ctrl+C).
 
@@ -236,6 +256,16 @@ with PortForward() as pf:
     pf.remove_port(8080)
 ```
 
+```python
+from f680 import Firewall
+
+with Firewall() as fw:
+    print(fw.config())   # {'enabled': True, 'level': 'low'}
+    print(fw.dos())      # {'enabled': True, 'threshold': 100}
+    fw.set_level("high")
+    fw.disable_dos()
+```
+
 Ошибки API — иерархия `F680Error` → `LoginFailed` / `RouterError`
 (подклассы `RuntimeError` — старый код продолжает работать):
 
@@ -278,9 +308,14 @@ usb, accessdev, port forwarding) работают. Подробности — в
 логин → создание временной привязки `192.168.1.199` → проверка →
 удаление. Тоже трогает **реальный** роутер.
 
+`tests/test_firewall_integration.py` — сквозной тест межсетевого
+экрана: чтение → смена уровня → вкл/выкл FW и anti-DoS → проверка →
+восстановление исходного состояния.
+
 ```bash
 python3 tests/test_pf_integration.py -v
 python3 tests/test_dhcp_integration.py
+python3 tests/test_firewall_integration.py
 ```
 
 ## Документация
@@ -292,6 +327,8 @@ python3 tests/test_dhcp_integration.py
   `DEV.NAT.PtMapping`, двойное экранирование сущностей
 * **[docs/DHCP.md](docs/DHCP.md)** — протокол статических DHCP-привязок:
   эндпоинты, правило `_InstNum`, коммит-лаг `-257`, лимит имени в 10 символов
+* **[docs/FIREWALL.md](docs/FIREWALL.md)** — протокол межсетевого экрана
+  и anti-DoS: эндпоинты, инстанс `IGD`, поведение `firewall_homepage`
 
 ## Известные особенности
 

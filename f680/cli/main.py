@@ -13,6 +13,7 @@ f680 — единый CLI для роутера ZTE F680 (DST/MGTS).
     report / all               полный отчёт: status + devices + ports + dhcp
     ports  list|add|enable|disable|remove|modify|rename   проброс портов (NAT)
     dhcp   list|leases|add|remove|modify|rename           статические DHCP-привязки (MAC -> IP)
+    firewall list|enable|disable|level|dos               межсетевой экран (уровень + anti-DoS)
     help <команда> [подкоманда]                          справка (f680 help ports add)
     page <tag>                 дамп data-страницы
     raw <qs>                   сырой запрос
@@ -58,6 +59,10 @@ ports modify, dhcp modify) просят подтверждение в терми
     f680 dhcp modify 192.168.1.6 --name Mac
     f680 dhcp add 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
     f680 dhcp remove 1
+    f680 firewall list
+    f680 firewall level high
+    f680 firewall dos set 200
+    f680 firewall disable
     f680 reboot -y
     f680 reset -y
 
@@ -85,6 +90,7 @@ import tty
 from f680.client import F680, F680Error, LoginFailed, RouterError, PAGES
 from f680.portforward import PortForward, PROTOS
 from f680.dhcp import Dhcp
+from f680.firewall import Firewall
 from f680.macvendor import guess_device
 from f680.config import BASE, USERNAME, PASSWORD
 from f680.cli import ui
@@ -708,6 +714,60 @@ def _cmd_dhcp(d, args):
     return 0
 
 
+def _cmd_firewall(fw, args):
+    sub = args.action
+    if sub == "list":
+        st = {"firewall": fw.config(), "anti_dos": fw.dos()}
+        if args.json:
+            print(json.dumps(st, ensure_ascii=False, indent=2))
+        else:
+            c, d = st["firewall"], st["anti_dos"]
+            def flag(on, yes="включён", no="выключен"):
+                return (ui.green(yes) if on else ui.red(no))
+            lvl = c["level"] or "—"
+            print(f"Межсетевой экран:  {flag(c['enabled'])}"
+                  f"  {ui.dim('уровень:')} {ui.bold(lvl)}")
+            thr = d["threshold"] if d["threshold"] is not None else "—"
+            print(f"Защита от DDoS:    {flag(d['enabled'])}"
+                  f"  {ui.dim('порог:')} {ui.bold(thr)}")
+    elif sub == "enable":
+        after = fw.enable()
+        print(ui.green("✓ ") + f"межсетевой экран включён "
+              f"(уровень: {after['level']})")
+    elif sub == "disable":
+        after = fw.disable()
+        print(ui.green("✓ ") + f"межсетевой экран выключен "
+              f"(уровень сохранён: {after['level']})")
+    elif sub == "level":
+        after = fw.set_level(args.level)
+        print(ui.green("✓ ") + f"уровень межсетевого экрана: "
+              f"{ui.bold(after['level'])}")
+    elif sub == "dos":
+        dsub = args.dos_action
+        if dsub == "list":
+            d = fw.dos()
+            if args.json:
+                print(json.dumps(d, ensure_ascii=False, indent=2))
+            else:
+                thr = d["threshold"] if d["threshold"] is not None else "—"
+                print(f"Защита от DDoS:  "
+                      f"{ui.green('включена') if d['enabled'] else ui.red('выключена')}"
+                      f"  {ui.dim('порог:')} {ui.bold(thr)}")
+        elif dsub == "enable":
+            after = fw.enable_dos()
+            print(ui.green("✓ ") + f"защита от DDoS включена "
+                  f"(порог: {after['threshold']})")
+        elif dsub == "disable":
+            after = fw.disable_dos()
+            print(ui.green("✓ ") + f"защита от DDoS выключена "
+                  f"(порог сохранён: {after['threshold']})")
+        elif dsub == "set":
+            after = fw.set_threshold(args.threshold)
+            print(ui.green("✓ ") + f"порог защиты от DDoS: "
+                  f"{ui.bold(after['threshold'])}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Парсер
 # ---------------------------------------------------------------------------
@@ -793,7 +853,11 @@ EPILOG = """
   f680 dhcp modify 192.168.1.6 --name Mac
   f680 dhcp add 192.168.1.6 1c:f6:4c:a0:cc:96 Macbook
   f680 dhcp remove 1 -y
-  f680 reboot                           # перезагрузить и дождаться подъёма
+  f680 firewall list                      # состояние FW и anti-DoS
+  f680 firewall level middle              # low|middle|high
+  f680 firewall dos set 200               # порог anti-DoS (1..999)
+  f680 firewall disable                   # выключить межсетевой экран
+  f680 reboot -y                         # перезагрузить и дождаться подъёма
   f680 reset -y                         # СБРОС к заводским (осторожно!)
 
 деструктивные действия (reboot, reset, * remove, * modify) просят
@@ -984,6 +1048,33 @@ def build_parser():
     dsrn.add_argument("ref", help=REF_DHCP)
     dsrn.add_argument("name", help="новое название (<= 10 символов)")
 
+    # -- firewall ------------------------------------------------------------
+    p = sub.add_parser("firewall",
+                       help="межсетевой экран (уровень + anti-DoS)")
+    fs = p.add_subparsers(dest="action", required=True, metavar="ДЕЙСТВИЕ")
+
+    fsl = fs.add_parser("list", help="состояние FW и anti-DoS")
+    fsl.add_argument("-j", "--json", action="store_true", help="вывод в JSON")
+
+    fen = fs.add_parser("enable", help="включить межсетевой экран")
+    fdis = fs.add_parser("disable", help="выключить межсетевой экран")
+
+    flev = fs.add_parser("level", help="изменить уровень (low|middle|high)")
+    flev.add_argument("level", choices=["low", "middle", "high"],
+                      help="уровень межсетевого экрана")
+
+    fd = fs.add_parser("dos", help="anti-DoS (защита от DDoS)")
+    fds = fd.add_subparsers(dest="dos_action", required=True,
+                            metavar="ДЕЙСТВИЕ")
+    fdsl = fds.add_parser("list", help="состояние anti-DoS")
+    fdsl.add_argument("-j", "--json", action="store_true",
+                      help="вывод в JSON")
+    fde = fds.add_parser("enable", help="включить anti-DoS")
+    fdd = fds.add_parser("disable", help="выключить anti-DoS")
+    fdset = fds.add_parser("set", help="изменить порог (1..999)")
+    fdset.add_argument("threshold", type=int,
+                       help="порог (1..999, по умолчанию 100)")
+
     # -- базовый API ----------------------------------------------------------
     p = sub.add_parser("page", help="дамп data-страницы (key/values)")
     p.add_argument("tag", help="страница или alias (wlan, wan, firewall, ...)")
@@ -1109,6 +1200,11 @@ def main(argv=None):
             with Dhcp(base=args.base, username=args.user,
                       password=args.password, verbose=args.verbose) as d:
                 return _cmd_dhcp(d, args) or 0
+        elif args.cmd == "firewall":
+            with Firewall(base=args.base, username=args.user,
+                          password=args.password,
+                          verbose=args.verbose) as fw:
+                return _cmd_firewall(fw, args) or 0
         else:
             with F680(base=args.base, username=args.user,
                       password=args.password,
