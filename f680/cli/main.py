@@ -507,15 +507,14 @@ def _cmd_ports(pf, args):
                            ext_port_end=args.port_end,
                            int_port_end=args.in_port_end,
                            remote_host=args.remote_host)
-        print(ui.green("✓ ") + f"правило порта {args.port} "
-              f"создано/обновлено (id: {rid})",
-              file=sys.stderr if args.json else sys.stdout)
-        rules = pf.rules()
         if args.json:
-            print(json.dumps([r for r in rules if r["id"] == rid],
-                             ensure_ascii=False, indent=2))
+            for r in pf.rules():
+                if r["id"] == rid:
+                    print(json.dumps(r, ensure_ascii=False, indent=2))
+                    break
         else:
-            print_rules(rules, numbered=True)
+            print(ui.green("✓ ") + f"правило порта {args.port} "
+                  f"создано/обновлено (id: {rid})")
     elif sub in ("enable", "disable"):
         rules = pf.rules()
         r = _resolve_port(args.ref, rules)
@@ -640,14 +639,14 @@ def _cmd_dhcp(d, args):
                 print_leases(rows)
     elif sub == "add":
         rid = d.set_reservation(args.ip, args.mac, name=args.name)
-        print(ui.green("✓ ") + f"привязка {args.ip} -> {args.mac.lower()} "
-              f"создана/обновлена (id: {rid})",
-              file=sys.stderr if args.json else sys.stdout)
-        rules = d.reservations()
         if args.json:
-            print(json.dumps(rules, ensure_ascii=False, indent=2))
+            for r in d.reservations():
+                if r["id"] == rid:
+                    print(json.dumps(r, ensure_ascii=False, indent=2))
+                    break
         else:
-            print_reservations(rules, numbered=True)
+            print(ui.green("✓ ") + f"привязка {args.ip} -> {args.mac.lower()} "
+                  f"создана/обновлена (id: {rid})")
     elif sub == "remove":
         rules = d.reservations()
         r = _resolve_dhcp(args.ref, rules)
