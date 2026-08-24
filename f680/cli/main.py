@@ -15,6 +15,7 @@ f680 — единый CLI для роутера ZTE F680 (DST/MGTS).
     dhcp   list|leases|add|remove|modify|rename           статические DHCP-привязки (MAC -> IP)
     firewall list|enable|disable|level|dos               межсетевой экран (уровень + anti-DoS)
     account list|password|timeout|set-timeout           учётные записи (смена пароля, таймаут)
+    wlan   list|on|off|ssid|passphrase|channel|ap       Wi-Fi (радио, SSID, канал, пароль)
     help <команда> [подкоманда]                          справка (f680 help ports add)
     page <tag>                 дамп data-страницы
     raw <qs>                   сырой запрос
@@ -67,6 +68,10 @@ ports modify, dhcp modify) просят подтверждение в терми
     f680 account list
     f680 account password mgts
     f680 account set-timeout 10
+    f680 wlan list
+    f680 wlan off 2.4
+    f680 wlan ssid AP1 "NewName"
+    f680 wlan channel 5 36
     f680 reboot -y
     f680 reset -y
 
@@ -96,6 +101,7 @@ from f680.portforward import PortForward, PROTOS
 from f680.dhcp import Dhcp
 from f680.firewall import Firewall
 from f680.account import Account
+from f680.wlan import WLAN
 from f680.macvendor import guess_device
 from f680.config import BASE, USERNAME, PASSWORD
 from f680.cli import ui
@@ -773,6 +779,64 @@ def _cmd_firewall(fw, args):
     return 0
 
 
+def _cmd_wlan(w, args):
+    import getpass
+
+    sub = args.action
+    if sub == "list":
+        radios = w.radios()
+        ssids = w.ssids()
+        if args.json:
+            out = {"radios": {k: {kk: vv for kk, vv in v.items() if kk != "raw"}
+                              for k, v in radios.items()},
+                   "ssids": [{k: v for k, v in s.items() if k != "raw"}
+                             for s in ssids]}
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+        else:
+            def flag(on, yes="включено", no="выключено"):
+                return (ui.green(yes) if on else ui.red(no))
+            for rd, r in radios.items():
+                ch = r["channel"]
+                ch_str = (f"{ui.bold(ch)} " + ui.dim("(авто)")
+                          if r["auto_channel"] else ui.bold(str(ch)))
+                print(f"{ui.bold(r['band'])}:  {flag(r['enabled'])}"
+                      f"  {ui.dim('канал:')} {ch_str}")
+            print()
+            for s in ssids:
+                st = (ui.green("вкл") if s["enabled"] else ui.dim("выкл"))
+                hidden = ui.dim("  скрыт") if s["hidden"] else ""
+                print(f"  {ui.bold(s['id']):<16} {st:<8} {ui.bold(s['ssid'])}"
+                      f"{ui.dim('  ' + str(s['band']) + ' GHz')}{hidden}")
+    elif sub == "on":
+        after = w.enable_radio(args.band)
+        print(ui.green("✓ ") + f"радио {ui.bold(after['band'])} включено")
+    elif sub == "off":
+        after = w.disable_radio(args.band)
+        print(ui.green("✓ ") + f"радио {ui.bold(after['band'])} выключено")
+    elif sub == "ssid":
+        after = w.set_ssid(args.ap, args.name)
+        print(ui.green("✓ ") + f"SSID '{after['id']}': "
+              f"{ui.bold(after['ssid'])} ({after['band']} GHz)")
+    elif sub == "passphrase":
+        password = args.password or getpass.getpass("Новый пароль: ")
+        after = w.set_passphrase(args.ap, password)
+        print(ui.green("✓ ") + f"пароль '{after['id']}' изменён "
+              f"(SSID: {after['ssid']})")
+    elif sub == "channel":
+        auto = True if args.auto else None
+        if not args.channel and not args.auto:
+            raise ValueError("задайте канал (число) или --auto")
+        after = w.set_channel(args.band, channel=args.channel, auto=auto)
+        ch = (f"{ui.bold(after['channel'])} " + ui.dim("(авто)")
+              if after["auto_channel"] else ui.bold(str(after["channel"])))
+        print(ui.green("✓ ") + f"канал {ui.bold(after['band'])}: {ch}")
+    elif sub == "ap":
+        after = w.set_ap(args.ap, enabled=args.enabled, hidden=args.hidden)
+        st = ui.green("вкл") if after["enabled"] else ui.red("выкл")
+        print(ui.green("✓ ") + f"'{after['id']}' ({after['ssid']}): {st}")
+    return 0
+
+
 def _cmd_account(acct, args):
     import getpass
 
@@ -1139,6 +1203,46 @@ def build_parser():
     acs2 = acs.add_parser("set-timeout", help="изменить время простоя (1..30)")
     acs2.add_argument("minutes", type=int, help="минут (1..30)")
 
+    # -- Wi-Fi -------------------------------------------------------------
+    p = sub.add_parser("wlan",
+                       help="Wi-Fi: радио 2.4/5 GHz, SSID, канал, пароль")
+    ws = p.add_subparsers(dest="action", required=True, metavar="ДЕЙСТВИЕ")
+
+    wl = ws.add_parser("list", help="радио + все SSID")
+    wl.add_argument("-j", "--json", action="store_true", help="вывод в JSON")
+
+    won = ws.add_parser("on", help="включить радио")
+    won.add_argument("band", choices=["2.4", "5"], help="полоса (2.4 или 5)")
+    woff = ws.add_parser("off", help="выключить радио")
+    woff.add_argument("band", choices=["2.4", "5"], help="полоса (2.4 или 5)")
+
+    wss = ws.add_parser("ssid", help="переименовать SSID")
+    wss.add_argument("ap", help="AP1..AP8, номер 1..8 или текущее имя SSID")
+    wss.add_argument("name", help="новое имя (1..32 символа)")
+
+    wpp = ws.add_parser("passphrase", help="сменить WPA-пароль SSID")
+    wpp.add_argument("ap", help="AP1..AP8, номер 1..8 или текущее имя SSID")
+    wpp.add_argument("password", nargs="?", default=None,
+                     help="пароль (8..63 ASCII), без него — спросит")
+
+    wch = ws.add_parser("channel", help="изменить канал радио")
+    wch.add_argument("band", choices=["2.4", "5"], help="полоса (2.4 или 5)")
+    wch.add_argument("channel", type=int, nargs="?", default=None,
+                     help="канал (2.4: 1..14, 5: 36..165)")
+    wch.add_argument("--auto", action="store_true", default=None,
+                     help="включить автоканал (вместо числа)")
+
+    wapp = ws.add_parser("ap", help="вкл/выкл или скрыть SSID")
+    wapp.add_argument("ap", help="AP1..AP8, номер 1..8 или текущее имя SSID")
+    wapp.add_argument("--enable", dest="enabled", action="store_true",
+                      default=None, help="включить SSID")
+    wapp.add_argument("--disable", dest="enabled", action="store_false",
+                      help="выключить SSID")
+    wapp.add_argument("--hide", dest="hidden", action="store_true",
+                      default=None, help="скрыть SSID")
+    wapp.add_argument("--no-hide", dest="hidden", action="store_false",
+                      help="не скрывать SSID")
+
     # -- базовый API ----------------------------------------------------------
     p = sub.add_parser("page", help="дамп data-страницы (key/values)")
     p.add_argument("tag", help="страница или alias (wlan, wan, firewall, ...)")
@@ -1274,6 +1378,11 @@ def main(argv=None):
                          password=args.password,
                          verbose=args.verbose) as acct:
                 return _cmd_account(acct, args) or 0
+        elif args.cmd == "wlan":
+            with WLAN(base=args.base, username=args.user,
+                      password=args.password,
+                      verbose=args.verbose) as w:
+                return _cmd_wlan(w, args) or 0
         else:
             with F680(base=args.base, username=args.user,
                       password=args.password,

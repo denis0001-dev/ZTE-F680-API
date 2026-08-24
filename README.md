@@ -45,11 +45,18 @@
     `set_timeout(минуты)`
   * тот же протокол: one-time токен `accountMgr` + RSA-подпись; ⚠️ после
     первого логина с новым паролем старая сессия выдавливается
+* **`f680.wlan.WLAN`** — **Wi-Fi** (радио 2.4/5 GHz, SSID, канал, пароль):
+  * `radios()` / `ssids()` — чтение; `set_radio()` / `set_channel()` /
+    `set_ssid()` / `set_passphrase()` / `set_ap()`
+  * тот же протокол: one-time токен `wlanBasic` + RSA-подпись;
+    ⚠️ `InstSwitch` — no-op, радио меняется полным Apply со всеми полями;
+    WPA-пароль — только внутри POST на AP
 * **CLI** (отдельно от Python API) — **единый `f680`**
   * `f680` / `python -m f680` — все команды роутера в одном:
     `status`, `devices` (`--json`), `report` (`all`), `ports list|add|enable|disable|remove|modify|rename`,
     `dhcp list|leases|add|remove|modify|rename`, `firewall list|enable|disable|level|dos`,
     `account list|password|timeout|set-timeout`,
+    `wlan list|on|off|ssid|passphrase|channel|ap`,
     `page <tag>`, `raw "<qs>"`, `pages`,
     `login`, `logout`, `reboot`, `reset`, `help [команда [подкоманда]]`
   * `ports add` — позиции `ПОРТ IP ВНУТР_ПОРТ [ИМЯ]` или эквивалентные флаги
@@ -87,6 +94,7 @@ f680-router/
 │   ├── dhcp.py                  #   DHCP-привязки (token + RSA Check, ретраи, модель правил)
 │   ├── firewall.py              #   межсетевой экран + anti-DoS (token + RSA Check)
 │   ├── account.py               #   учётные записи: смена пароля, таймаут (token + RSA Check)
+│   ├── wlan.py                  #   Wi-Fi: радио, SSID, канал, пароль (token + RSA Check)
 │   ├── macvendor.py             #   вендоры по MAC (OUI + hostname-эвристики)
 │   └── cli/                     #   командный интерфейс (argparse)
 │       ├── main.py              #     f680: python -m f680
@@ -95,13 +103,15 @@ f680-router/
 │   ├── test_pf_integration.py   # сквозной тест: add rule → verify → delete
 │   ├── test_dhcp_integration.py # сквозной тест: add bind → verify → delete
 │   ├── test_firewall_integration.py # сквозной тест: level/enable/dos → verify → restore
-│   └── test_account_integration.py  # сквозной тест: accounts/timeout → смена пароля → verify → restore
+│   ├── test_account_integration.py  # сквозной тест: accounts/timeout → смена пароля → verify → restore
+│   └── test_wlan_integration.py     # сквозной тест: passphrase/ssid/radio (AP4/AP8, 5 GHz) → restore
 ├── docs/
 │   ├── API.md                   # документация по API роутера (auth, endpoints, XML)
 │   ├── PORT_FORWARDING.md       # протокол port forwarding (токены, RSA, модель правил)
 │   ├── DHCP.md                  # протокол DHCP-привязок (токен, _InstNum, коммит-лаг)
 │   ├── FIREWALL.md              # протокол межсетевого экрана + anti-DoS
-│   └── ACCOUNT.md               # протокол учётных записей (смена пароля, таймаут)
+│   ├── ACCOUNT.md               # протокол учётных записей (смена пароля, таймаут)
+│   └── WLAN.md                  # протокол Wi-Fi (радио, SSID, InstSwitch-noop, пароль)
 ├── .env.example                 # шаблон настроек (скопировать в .env)
 ├── pyproject.toml               # установка пакета + консольные скрипты
 ├── requirements.txt
@@ -184,6 +194,18 @@ f680 firewall dos disable
 f680 account list                    # учётные записи + таймаут сессии
 f680 account password mgts           # смена пароля (3 промпта getpass)
 f680 account set-timeout 10          # время простоя сессии (1..30 мин)
+```
+
+```bash
+# Wi-Fi (радио 2.4/5 GHz, SSID, канал, пароль)
+f680 wlan list                       # радио + все SSID (есть --json)
+f680 wlan off 5                      # выключить радио 5 GHz
+f680 wlan on 5                       # включить обратно
+f680 wlan ssid AP1 "NewName"         # AP1..AP8, номер 1..8 или текущее имя
+f680 wlan passphrase AP1             # WPA-пароль (8..63 ASCII; без аргумента спросит)
+f680 wlan channel 5 36               # явный канал (2.4: 1..14, 5: 36..165)
+f680 wlan channel 5 --auto           # автоканал
+f680 wlan ap 1 --disable --hide      # вкл/выкл и скрытие SSID
 ```
 
 ```bash
@@ -278,6 +300,18 @@ with Firewall() as fw:
     fw.disable_dos()
 ```
 
+```python
+from f680 import WLAN
+
+with WLAN() as w:
+    print(w.radios())    # состояние радио 2.4/5 GHz
+    for s in w.ssids():  # все 8 SSID
+        print(s["id"], s["ssid"], s["enabled"])
+    w.set_ssid("AP1", "NewName")
+    w.set_channel("5", auto=True)
+    w.disable_radio("5")
+```
+
 Ошибки API — иерархия `F680Error` → `LoginFailed` / `RouterError`
 (подклассы `RuntimeError` — старый код продолжает работать):
 
@@ -329,11 +363,17 @@ usb, accessdev, port forwarding) работают. Подробности — в
 паролем (новая сессия, т.к. старую выдавливает) → откат пароля →
 логин с исходным.
 
+`tests/test_wlan_integration.py` — сквозной тест Wi-Fi: все
+«болтающиеся» изменения — на выключенных SSID (AP4/AP8): смена пароля +
+SSID, вкл/выкл SSID, round-trip 5 GHz радио и автоканала → проверка →
+восстановление (старый WPA-пароль AP4 нечитаем, остаётся `TestPsw123`).
+
 ```bash
 python3 tests/test_pf_integration.py -v
 python3 tests/test_dhcp_integration.py
 python3 tests/test_firewall_integration.py
 python3 tests/test_account_integration.py
+python3 tests/test_wlan_integration.py
 ```
 
 ## Документация
@@ -351,6 +391,10 @@ python3 tests/test_account_integration.py
   смена пароля (`_InstID=IGD.AU1/AU2`), таймаут сессии, выдавливание
   старой сессии после логина с новым паролем, `lockingTime` при
   неудачных попытках
+* **[docs/WLAN.md](docs/WLAN.md)** — протокол Wi-Fi: радио
+  `DEV.WIFI.RD1/RD2`, SSID `DEV.WIFI.AP1..AP8`, почему `InstSwitch` —
+  no-op, `Channel=NULL` при автоканале, WPA-пароль только внутри POST
+  на AP
 
 ## Известные особенности
 

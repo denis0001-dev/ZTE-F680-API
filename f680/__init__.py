@@ -17,9 +17,10 @@ from .portforward import PortForward
 from .dhcp import Dhcp
 from .firewall import Firewall
 from .account import Account
+from .wlan import WLAN
 from .macvendor import mac_vendor, hostname_hint, guess_device
 
 __all__ = ["F680", "F680Error", "LoginFailed", "RouterError",
-           "PortForward", "Dhcp", "Firewall", "Account", "PAGES",
+           "PortForward", "Dhcp", "Firewall", "Account", "WLAN", "PAGES",
            "mac_vendor", "hostname_hint", "guess_device"]
-__version__ = "1.6.0"
+__version__ = "1.7.0"

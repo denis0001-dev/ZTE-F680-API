@@ -141,6 +141,9 @@ class Firewall:
                 return out
             last = RouterError(
                 f"ошибка роутера (IF_ERRORID={out.get('IF_ERRORID')}): {err}")
+            if "sessiontimeout" in err.lower():
+                # сессия роутера протухла, а cookie жив: перезалогиниться
+                self.c.login()
             if i < 3:
                 time.sleep(3)
         raise last
