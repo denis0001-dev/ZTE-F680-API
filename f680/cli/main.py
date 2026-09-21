@@ -92,6 +92,22 @@ import json
 import os
 import re
 import sys
+import sys as _sys, types as _types
+if _sys.platform == 'win32':
+    def _s(*a, **k): return None
+    if 'termios' not in _sys.modules:
+        try:
+            import termios
+        except ImportError:
+            _m = _types.ModuleType('termios'); _m.TCSADRAIN = 0
+            _m.tcgetattr = lambda fd: []; _m.tcsetattr = _s
+            _sys.modules['termios'] = _m
+    if 'tty' not in _sys.modules:
+        try:
+            import tty
+        except Exception:
+            _m = _types.ModuleType('tty'); _m.setraw = _s; _m.cbreak = _s
+            _sys.modules['tty'] = _m
 import termios
 import time
 import tty
